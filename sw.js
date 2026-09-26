@@ -1,5 +1,5 @@
 /* 収集マップ Service Worker */
-var VER = "cm-shell-4.0.0";
+var VER = "cm-shell-4.1.0";
 var TILES = "cm-tiles-1";
 var TILE_MAX = 2000;
 var SHELL = ["./", "index.html", "app.js", "data.json", "b/index.json", "manifest.webmanifest",
