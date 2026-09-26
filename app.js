@@ -53,7 +53,7 @@ var user = {version:2, visits:[], custom:[], areas:[], gomi:[], yuru:[]};
 var got = {};   // got[pid][type] = {n, last, nos:[]}
 var gotR = {};  // 国道ステッカーは番号単位 gotR["r23"] = {n, last, where:[pid]}
 var filt = {g:{me:true,hw:true,pf:true,rt:true,cu:true,yu:true,gm:true}, meMode:"all", undone:false, q:""};
-var me = null, watchId = null, manual = false;
+var me = null, watchId = null, manual = false, lastFix = null, lastFixT = 0;
 var map = null, mapOK = false, markers = {}, meMarker = null;
 var selId = null, listLimit = 100;
 var editVisit = null;   // {pid, id|null}
@@ -164,46 +164,52 @@ function renderHeader(list){
   });
   $("pDone").textContent = d; $("pAll").textContent = t;
 }
+/* 絞り込み欄：一度作ったら使い回し、状態だけ更新する（開いた選択肢が閉じないように） */
+var FILT = null, FILT_SIG = "";
+function presentGroups(){
+  return GROUP_ORDER.filter(function(g){
+    if(g === "yu" || g === "gm") return false;
+    return PLACES.some(function(p){ return p.c.some(function(t){ return grp(t) === g; }); });
+  });
+}
+function makeChip(label, color, onclick){
+  var b = document.createElement("button");
+  b.type = "button"; b.className = "chip";
+  b.style.setProperty("--c", color);
+  b.innerHTML = '<span class="dot"></span>' + esc(label);
+  b.onclick = onclick;
+  return b;
+}
+function setPressed(el, on){ var v = on ? "true" : "false"; if(el.getAttribute("aria-pressed") !== v) el.setAttribute("aria-pressed", v); }
 function renderFilters(){
-  var w = $("filters"); w.innerHTML = "";
-  GROUP_ORDER.forEach(function(g){
-    if(g === "yu" || g === "gm") return;
-    var any = PLACES.some(function(p){ return p.c.some(function(t){ return grp(t) === g; }); });
-    if(!any) return;
-    var b = document.createElement("button");
-    b.type = "button"; b.className = "chip";
-    b.setAttribute("aria-pressed", filt.g[g] ? "true" : "false");
-    b.style.setProperty("--c", GROUPS[g].color);
-    b.innerHTML = '<span class="dot"></span>' + esc(GROUPS[g].label);
-    b.onclick = function(){ filt.g[g] = !filt.g[g]; listLimit = 100; renderAll(); };
-    w.appendChild(b);
-    if(g === "me"){
-      var s = document.createElement("select");
-      s.className = "chipsel"; s.setAttribute("aria-label","道の駅の判定");
-      [["all","道の駅: 4種すべて"],["stamp","道の駅: スタンプ"],["kippu","道の駅: きっぷ"],["card","道の駅: カード"],["shitei","道の駅: 指定券"]]
-        .forEach(function(o){ var op = document.createElement("option"); op.value = o[0]; op.textContent = o[1];
-          if(filt.meMode === o[0]) op.selected = true; s.appendChild(op); });
-      s.onchange = function(){ filt.meMode = s.value; renderAll(); };
-      s.disabled = !filt.g.me;
-      w.appendChild(s);
-    }
-  });
-  ["yu","gm"].forEach(function(g){
-    var b = document.createElement("button");
-    b.type = "button"; b.className = "chip";
-    b.setAttribute("aria-pressed", filt.g[g] ? "true" : "false");
-    b.style.setProperty("--c", GROUPS[g].color);
-    b.innerHTML = '<span class="dot"></span>' + esc(GROUPS[g].label);
-    b.onclick = function(){ filt.g[g] = !filt.g[g]; renderAll(); };
-    w.appendChild(b);
-  });
-  var u = document.createElement("button");
-  u.type = "button"; u.className = "chip";
-  u.setAttribute("aria-pressed", filt.undone ? "true" : "false");
-  u.style.setProperty("--c", "#E5A100");
-  u.innerHTML = '<span class="dot"></span>未完了のみ';
-  u.onclick = function(){ filt.undone = !filt.undone; listLimit = 100; renderAll(); };
-  w.appendChild(u);
+  var groups = presentGroups(), sig = groups.join(",");
+  if(!FILT || sig !== FILT_SIG){
+    var w = $("filters"); w.innerHTML = ""; FILT = {chips:{}, sel:null, undone:null}; FILT_SIG = sig;
+    groups.forEach(function(g){
+      var b = makeChip(GROUPS[g].label, GROUPS[g].color, function(){ filt.g[g] = !filt.g[g]; listLimit = 100; renderAll(); });
+      FILT.chips[g] = b; w.appendChild(b);
+      if(g === "me"){
+        var s = document.createElement("select");
+        s.className = "chipsel"; s.setAttribute("aria-label","道の駅の判定");
+        [["all","道の駅: 4種すべて"],["stamp","道の駅: スタンプ"],["kippu","道の駅: きっぷ"],["card","道の駅: カード"],["shitei","道の駅: 指定券"]]
+          .forEach(function(o){ var op = document.createElement("option"); op.value = o[0]; op.textContent = o[1]; s.appendChild(op); });
+        s.onchange = function(){ filt.meMode = s.value; renderAll(); };
+        FILT.sel = s; w.appendChild(s);
+      }
+    });
+    ["yu","gm"].forEach(function(g){
+      var b = makeChip(GROUPS[g].label, GROUPS[g].color, function(){ filt.g[g] = !filt.g[g]; renderAll(); });
+      FILT.chips[g] = b; w.appendChild(b);
+    });
+    FILT.undone = makeChip("未完了のみ", "#E5A100", function(){ filt.undone = !filt.undone; listLimit = 100; renderAll(); });
+    w.appendChild(FILT.undone);
+  }
+  Object.keys(FILT.chips).forEach(function(g){ setPressed(FILT.chips[g], filt.g[g]); });
+  setPressed(FILT.undone, filt.undone);
+  if(FILT.sel){
+    if(FILT.sel.value !== filt.meMode) FILT.sel.value = filt.meMode;
+    if(FILT.sel.disabled !== !filt.g.me) FILT.sel.disabled = !filt.g.me;
+  }
 }
 function sorted(list){
   if(me){
@@ -728,21 +734,23 @@ function stopLocate(){
   if(manual) setManual(false);
   $("btnLoc").classList.remove("on");
   if(meMarker && mapOK){ map.removeLayer(meMarker); meMarker = null; }
-  me = null; renderAll();
+  me = null; lastFix = null; renderAll();
 }
 function toggleLocate(){
   if(watchId !== null || manual){ stopLocate(); return; }
   if(!navigator.geolocation){ setManual(true); toast("現在地が使えないため、地図の中心を基準にします"); return; }
   $("btnLoc").classList.add("on");
   watchId = navigator.geolocation.watchPosition(function(pos){
-    me = {lat:pos.coords.latitude, lng:pos.coords.longitude};
+    var fix = {lat:pos.coords.latitude, lng:pos.coords.longitude};
+    var moved = !lastFix || dist(lastFix, fix) >= 0.05 || (Date.now() - lastFixT) > 30000;
+    me = fix;
     if(mapOK){
       if(!meMarker){
         meMarker = L.marker([me.lat, me.lng], {icon:L.divIcon({className:"", html:'<span class="me"></span>', iconSize:[16,16], iconAnchor:[8,8]}), zIndexOffset:1000, interactive:false}).addTo(map);
         map.setView([me.lat, me.lng], Math.max(map.getZoom(), 12));
       }else meMarker.setLatLng([me.lat, me.lng]);
     }
-    renderAll();
+    if(moved){ lastFix = fix; lastFixT = Date.now(); renderAll(); }
   }, function(err){
     watchId = null; $("btnLoc").classList.remove("on");
     setManual(true);
@@ -757,7 +765,7 @@ function initMap(){
   map = L.map("map", {zoomControl:false, preferCanvas:true}).setView([36.4, 137.8], 5);
   L.control.zoom({position:"topleft"}).addTo(map);
   L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {maxZoom:19, crossOrigin:true, attribution:"&copy; OpenStreetMap contributors"}).addTo(map);
-  map.on("contextmenu", function(e){ if(!pick) openAddPlace(e.latlng); });
+  map.on("contextmenu", function(e){ if(!pick) openAddMenu(e.latlng); });
   areaLayer = L.layerGroup().addTo(map);
   pickLayer = L.layerGroup().addTo(map);
   map.on("click", onMapClickPick);
@@ -1047,6 +1055,7 @@ function updatePickBar(){
           "・政令市は" + (pick.ward ? "区ごと" : "市全体") + "で選択</small>";
     btns.push([pick.ward ? "市全体で選ぶ" : "区ごとに選ぶ","ward",""]);
     btns.push(["範囲を描く","draw",""]);
+    btns.push(["名前で入力","names",""]);
     btns.push(["やめる","cancel",""]);
     btns.push(["決定","ok", (pickCount() || pick.poly.length >= 3) ? "primary" : "primary\" disabled=\"disabled"]);
   }else{
@@ -1063,6 +1072,7 @@ function updatePickBar(){
 function areaUnitsOfSel(){ var s = {}; Object.keys(pick.sel).forEach(function(c){ s[unitOf(c)] = 1; }); return Object.keys(s); }
 function pickAction(k){
   if(k === "cancel"){ endPick(); return; }
+  if(k === "names"){ var p = pick.purpose; endPick(); openNames(p); return; }
   if(k === "ward"){ pick.ward = !pick.ward; updatePickBar(); return; }
   if(k === "draw"){ pick.mode = "draw"; updatePickBar(); drawPickBoundaries(); return; }
   if(k === "muni"){ pick.mode = "muni"; updatePickBar(); drawPickBoundaries(); return; }
@@ -1124,11 +1134,8 @@ function pickDecide(){
   var codes = Object.keys(pick.sel).sort(), poly = pick.poly.length >= 3 ? pick.poly.slice() : null;
   if(!codes.length && !poly){ toast("自治体を選ぶか、範囲を描いてください"); return; }
   var purpose = pick.purpose;
-  var same = poly ? null : liveAreas().filter(function(a){ return !a.poly && (a.codes || []).slice().sort().join(",") === codes.join(","); })[0];
   endPick();
-  var target = same ? {aid:same.id} : {newArea:{codes:codes, poly:poly, name:suggestName(codes, poly)}};
-  if(same) toast("登録済みのエリア「" + same.n + "」に追加します");
-  if(purpose === "gomi") openGomi(target, null); else openYuru(target, null);
+  finishArea(purpose, codes, poly);
 }
 
 /* ---- 進捗（ゴミ袋・ゆるキャラ） ---- */
@@ -1173,11 +1180,123 @@ function renderProgYuru(body){
 }
 
 /* ---- 登録メニュー ---- */
-$("btnAddAny").onclick = function(){ if(pick) return; $("dlgAdd").showModal(); };
+/* ---- 自治体を名前で指定 ---- */
+var NAMEIDX = null, UNITCODES = null, namesCtx = null, namesTimer = null, namesRes = [];
+function nfkc(t){ try{ return String(t).normalize("NFKC"); }catch(e){ return String(t); } }
+function buildNameIdx(){
+  NAMEIDX = {}; UNITCODES = {};
+  Object.keys(BIDX.unit).forEach(function(c){ var u = BIDX.unit[c]; (UNITCODES[u] = UNITCODES[u] || []).push(c); });
+  function add(n, rec){ (NAMEIDX[n] = NAMEIDX[n] || []).push(rec); }
+  Object.keys(BIDX.uname).forEach(function(u){ add(BIDX.uname[u], {u:u, pc:unitPref(u), label:BIDX.uname[u]}); });
+  Object.keys(BIDX.cn).forEach(function(c){
+    var u = BIDX.unit[c];
+    if(u && u.charAt(0) === "s") add(BIDX.uname[u] + BIDX.cn[c], {c:c, pc:c.slice(0,2), label:BIDX.uname[u] + BIDX.cn[c]});
+  });
+}
+function resolveToken(tok, pcFilter){
+  var t = nfkc(tok).replace(/\s+/g, "");
+  if(!t) return null;
+  var pc = pcFilter || "";
+  Object.keys(BIDX.pref).some(function(k){
+    var n = BIDX.pref[k].n;
+    if(t.indexOf(n) === 0 && t.length > n.length){ pc = k; t = t.slice(n.length); return true; }
+    return false;
+  });
+  t = t.replace(/^.+?郡(?=.+[町村]$)/, "");
+  var c = (NAMEIDX[t] || []).slice();
+  if(!c.length) ["市","町","村","区"].forEach(function(sfx){ c = c.concat(NAMEIDX[t + sfx] || []); });
+  if(pc) c = c.filter(function(x){ return x.pc === pc; });
+  return {tok:tok.trim(), cands:c};
+}
+function prefName(pc){ return BIDX.pref[pc] ? BIDX.pref[pc].n : pc; }
+function candKey(x){ return x.u ? "u:" + x.u : "c:" + x.c; }
+function candCodes(x){ return x.u ? (UNITCODES[x.u] || []) : [x.c]; }
+function openNames(purpose){
+  if(!BIDX){ toast("自治体データを読み込み中です。少し待ってから試してください"); loadIndex().catch(function(){}); return; }
+  if(!NAMEIDX) buildNameIdx();
+  namesCtx = {purpose:purpose, pick:{}};
+  $("nTitle").textContent = purpose === "gomi" ? "ゴミ袋：自治体を名前で指定" : "ゆるキャラ：自治体を名前で指定";
+  var sel = $("nPref");
+  if(sel.options.length <= 1) Object.keys(BIDX.pref).sort().forEach(function(pc){
+    var o = document.createElement("option"); o.value = pc; o.textContent = BIDX.pref[pc].n; sel.appendChild(o);
+  });
+  $("nText").value = ""; $("nRes").innerHTML = "";
+  $("dlgNames").showModal();
+  setTimeout(function(){ $("nText").focus(); }, 60);
+}
+function refreshNames(){
+  if(!namesCtx) return;
+  var pc = $("nPref").value;
+  var toks = $("nText").value.split(/[,、，\n;；・]+/).map(function(x){ return x.trim(); }).filter(Boolean);
+  namesRes = toks.map(function(t){ return resolveToken(t, pc); }).filter(Boolean);
+  var okList = [], amb = [], ng = [];
+  namesRes.forEach(function(r){
+    if(r.cands.length === 1) okList.push(r.cands[0]);
+    else if(r.cands.length > 1) amb.push(r);
+    else ng.push(r.tok);
+  });
+  var h = "";
+  if(okList.length) h += '<div class="ok">✓ ' + okList.map(function(x){ return esc(x.label) + "（" + esc(prefName(x.pc)) + "）"; }).join("、") + "</div>";
+  amb.forEach(function(r, i){
+    h += '<div class="amb">「' + esc(r.tok) + '」は複数あります。該当するものを選んでください：<br>' + r.cands.map(function(x){
+      var k = candKey(x);
+      return '<label><input type="checkbox" data-k="' + esc(k) + '"' + (namesCtx.pick[k] ? " checked" : "") + ">" + esc(x.label) + "（" + esc(prefName(x.pc)) + "）</label>";
+    }).join("") + "</div>";
+  });
+  if(ng.length) h += '<div class="ng">見つかりません：' + ng.map(esc).join("、") + '<br><small>表記を確かめるか、合併前の名前なら「地図で選ぶ」から範囲を描いてください。</small></div>';
+  $("nRes").innerHTML = h;
+  $("nRes").querySelectorAll("input[data-k]").forEach(function(cb){
+    cb.onchange = function(){ if(cb.checked) namesCtx.pick[cb.getAttribute("data-k")] = 1; else delete namesCtx.pick[cb.getAttribute("data-k")]; };
+  });
+}
+function namesCodes(){
+  var set = {};
+  namesRes.forEach(function(r){
+    var use = r.cands.length === 1 ? r.cands : r.cands.filter(function(x){ return namesCtx.pick[candKey(x)]; });
+    use.forEach(function(x){ candCodes(x).forEach(function(c){ set[c] = 1; }); });
+  });
+  return Object.keys(set).sort();
+}
+$("nText").addEventListener("input", function(){ clearTimeout(namesTimer); namesTimer = setTimeout(refreshNames, 200); });
+$("nPref").onchange = refreshNames;
+$("nOk").onclick = function(){
+  refreshNames();
+  var codes = namesCodes();
+  if(!codes.length){ toast("該当する自治体がありません"); return; }
+  var purpose = namesCtx.purpose;
+  $("dlgNames").close(); namesCtx = null;
+  finishArea(purpose, codes, null);
+};
+$("nMap").onclick = function(){ var p = namesCtx && namesCtx.purpose; $("dlgNames").close(); namesCtx = null; if(p) startPick(p); };
+
+/* ---- 選んだ範囲からエリアを作る（地図・名前の共通） ---- */
+function finishArea(purpose, codes, poly){
+  var same = poly ? null : liveAreas().filter(function(a){ return !a.poly && (a.codes || []).slice().sort().join(",") === codes.join(","); })[0];
+  var target = same ? {aid:same.id} : {newArea:{codes:codes, poly:poly, name:suggestName(codes, poly)}};
+  if(same) toast("登録済みのエリア「" + same.n + "」に追加します");
+  var need = {}; codes.forEach(function(c){ need[c.slice(0,2)] = 1; });
+  Promise.all(Object.keys(need).map(loadPref)).then(renderAreas).catch(function(){});
+  if(purpose === "gomi") openGomi(target, null); else openYuru(target, null);
+}
+
+/* ---- 登録メニュー（＋ボタンと長押しの共通） ---- */
+var addCtx = null;
+function openAddMenu(ll){
+  if(pick) return;
+  addCtx = ll ? {lat:+ll.lat.toFixed(6), lng:+ll.lng.toFixed(6)} : null;
+  $("addCtx").style.display = addCtx ? "block" : "none";
+  $("yuruPointSub").textContent = addCtx ? "長押しした場所に登録" : "地図をタップして場所を指定";
+  $("placeSub").textContent = addCtx ? "長押しした場所に追加" : "現在地、または緯度経度を入力して追加";
+  $("dlgAdd").showModal();
+}
+
+$("btnAddAny").onclick = function(){ openAddMenu(null); };
 document.querySelectorAll("[data-add]").forEach(function(b){
   b.onclick = function(){
-    var k = b.getAttribute("data-add"); $("dlgAdd").close();
-    if(k === "place") openAddPlace(null); else startPick(k);
+    var k = b.getAttribute("data-add"), ll = addCtx; $("dlgAdd").close(); addCtx = null;
+    if(k === "place") openAddPlace(ll ? L.latLng(ll.lat, ll.lng) : null);
+    else if(k === "yuruPoint"){ if(ll) openYuru({newPoint:ll}, null); else startPick("yuruPoint"); }
+    else openNames(k);
   };
 });
 
@@ -1221,5 +1340,6 @@ window.__cm = {user:function(){ return user; }, places:function(){ return PLACES
   importText:importText, quickToggle:quickToggle, select:select, tally:tally, visible:function(){ return _vis; }, filt:filt,
   map:function(){ return map; }, pick:function(){ return pick; }, bidx:function(){ return BIDX; }, bnd:function(){ return BND; },
   loadPref:loadPref, togglePickFeature:togglePickFeature, pickAction:pickAction, onMapClickPick:onMapClickPick,
-  areaLayer:function(){ return areaLayer; }, exportJson:exportJson, selectArea:selectArea};
+  areaLayer:function(){ return areaLayer; }, exportJson:exportJson, selectArea:selectArea,
+  openAddMenu:openAddMenu, openNames:openNames, refreshNames:refreshNames, fire:function(ev, ll){ map.fire(ev, {latlng:L.latLng(ll[0], ll[1])}); }};
 })();
