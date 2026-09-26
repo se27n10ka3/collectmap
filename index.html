@@ -169,6 +169,13 @@ label.l{display:block;font-size:12px;color:var(--ink-soft);margin:0 0 5px}
 .addlist .btn{justify-content:flex-start;padding:12px 14px;font-size:14px}
 .addlist .btn small{display:block;font-weight:400;color:var(--ink-soft);font-size:11.5px;margin-top:2px}
 .sw{display:inline-block;width:14px;height:14px;border-radius:4px;border:1px solid var(--line);vertical-align:-2px;margin-right:4px}
+.nres{margin-top:10px;font-size:13px;line-height:1.7}
+.nres .ok{color:var(--done)}
+.nres .ng{color:var(--danger)}
+.nres .amb{margin:6px 0;padding:8px 10px;border:1px solid var(--line);border-radius:9px}
+.nres .amb label{display:inline-flex;align-items:center;gap:5px;margin:3px 10px 3px 0;font-size:13px}
+.nres .amb input{width:18px;height:18px}
+#addCtx{display:none;font-size:12.5px;color:var(--ink-soft);margin:0 0 4px}
 #toast{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom) + 20px);transform:translateX(-50%);background:var(--ink);color:#fff;
   padding:10px 16px;border-radius:999px;font-size:13px;opacity:0;pointer-events:none;transition:opacity .2s;z-index:9999;max-width:88vw;text-align:center}
 #toast.show{opacity:.95}
@@ -286,12 +293,29 @@ label.l{display:block;font-size:12px;color:var(--ink-soft);margin:0 0 5px}
 <dialog id="dlgAdd"><div class="dlg">
   <h2>登録する</h2>
   <div class="content addlist">
-    <button class="btn" type="button" data-add="gomi">ゴミ袋<small>自治体をタップして選ぶ。複数選べば清掃組合などのまとまりに</small></button>
-    <button class="btn" type="button" data-add="yuruArea">ゆるキャラグッズ（エリア）<small>地域・自治体・自治体の一部など。範囲を描くこともできます</small></button>
-    <button class="btn" type="button" data-add="yuruPoint">ゆるキャラグッズ（地点）<small>施設・会社など。地図をタップして場所を指定</small></button>
-    <button class="btn" type="button" data-add="place">その他の地点<small>地図の長押しでも追加できます</small></button>
+    <p id="addCtx">長押しした場所で登録できるのは「地点」の2つです。</p>
+    <button class="btn" type="button" data-add="gomi">ゴミ袋<small>自治体名をカンマ区切りで入力。地図で選ぶこともできます</small></button>
+    <button class="btn" type="button" data-add="yuruArea">ゆるキャラグッズ（自治体・地域）<small>自治体名を入力、地図で選ぶ、または範囲を描く</small></button>
+    <button class="btn" type="button" data-add="yuruPoint">ゆるキャラグッズ（施設・会社などの地点）<small id="yuruPointSub">地図をタップして場所を指定</small></button>
+    <button class="btn" type="button" data-add="place">その他の地点<small id="placeSub">場所を指定して追加</small></button>
   </div>
   <div class="foot"><button class="btn" type="button" data-close>閉じる</button></div>
+</div></dialog>
+
+<!-- 自治体を名前で指定 -->
+<dialog id="dlgNames"><div class="dlg">
+  <h2 id="nTitle">自治体を名前で指定</h2>
+  <div class="content">
+    <p class="help">カンマ（,）や読点（、）で区切って入力してください。「市」「町」などは省略できます。政令市は市の名前で市全体、「横浜市中区」のように書けば区だけになります。</p>
+    <div class="f"><label class="l" for="nPref">都道府県（同じ名前の自治体がある場合の絞り込み・任意）</label><select id="nPref"><option value="">指定しない</option></select></div>
+    <div class="f"><label class="l" for="nText">自治体名</label><textarea id="nText" placeholder="豊橋市, 豊川市, 田原市"></textarea></div>
+    <div class="nres" id="nRes"></div>
+  </div>
+  <div class="foot">
+    <button class="btn" type="button" id="nMap">地図で選ぶ</button>
+    <button class="btn ghost" type="button" data-close>やめる</button>
+    <button class="btn primary" type="button" id="nOk">決定</button>
+  </div>
 </div></dialog>
 
 <!-- ゴミ袋 -->
