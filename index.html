@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="theme-color" content="#0B5394">
+<meta name="color-scheme" content="light">
+<title>収集マップ</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="vendor/leaflet.css">
+<style>
+:root{
+  --sign:#0B5394; --sign-dark:#083B6B;
+  --road:#EEF1F4; --plate:#FFFFFF;
+  --ink:#15202A; --ink-soft:#5A6B77; --line:#CBD4DB; --line-soft:#EDF1F4;
+  --done:#1B6E4C; --warn:#E5A100; --danger:#B3261E;
+  --g-me:#0B5394; --g-hw:#00796B; --g-pf:#D81B60; --g-rt:#455A64; --g-cu:#8A8F94;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;font-family:"Hiragino Kaku Gothic ProN","Hiragino Sans","Noto Sans JP","Yu Gothic",system-ui,sans-serif;
+  color:var(--ink);background:var(--road);-webkit-text-size-adjust:100%;overscroll-behavior:none}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:3px solid var(--warn);outline-offset:2px}
+#app{display:flex;flex-direction:column;height:100dvh}
+
+/* ヘッダー */
+header{background:var(--sign);color:#fff;padding:calc(env(safe-area-inset-top) + 10px) 12px 10px;flex:0 0 auto}
+.hrow{display:flex;align-items:center;gap:8px}
+.title{font-size:17px;font-weight:700;letter-spacing:.04em;margin:0;flex:1;white-space:nowrap}
+.plate{display:flex;align-items:baseline;gap:5px;border:2px solid #fff;border-radius:7px;padding:4px 9px 5px;line-height:1}
+.plate b{font-size:20px;font-weight:700;font-variant-numeric:tabular-nums}
+.plate span{font-size:11.5px;opacity:.85}
+.iconbtn{background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.35);color:#fff;border-radius:8px;
+  min-width:38px;height:38px;padding:0 8px;font-size:14px;font-weight:600;line-height:1;display:grid;place-items:center}
+.iconbtn:active{background:rgba(255,255,255,.3)}
+.filters{display:flex;gap:6px;overflow-x:auto;padding:10px 12px 2px;margin:0 -12px;scrollbar-width:none;align-items:center}
+.filters::-webkit-scrollbar{display:none}
+.chip{flex:0 0 auto;display:flex;align-items:center;gap:6px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.3);
+  color:#fff;border-radius:999px;padding:6px 12px;font-size:13px;white-space:nowrap;opacity:.5}
+.chip[aria-pressed="true"]{opacity:1;background:#fff;color:var(--sign-dark);border-color:#fff;font-weight:600}
+.chip .dot{width:9px;height:9px;border-radius:50%;background:var(--c);flex:0 0 auto}
+.chipsel{flex:0 0 auto;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.3);color:#fff;border-radius:999px;
+  padding:6px 10px;font-size:13px;appearance:none;-webkit-appearance:none}
+.chipsel option{color:var(--ink)}
+
+/* 地図 */
+#mapwrap{position:relative;flex:1 1 auto;min-height:0}
+#map{position:absolute;inset:0;background:#DDE3E8}
+#mapfail{position:absolute;inset:0;display:none;place-items:center;text-align:center;padding:24px;color:var(--ink-soft);font-size:14px;line-height:1.7;background:var(--road)}
+.mapbtns{position:absolute;right:10px;bottom:14px;z-index:500;display:flex;flex-direction:column;gap:8px}
+.mapbtn{width:46px;height:46px;border-radius:12px;border:1px solid var(--line);background:var(--plate);color:var(--sign);font-size:19px;
+  box-shadow:0 2px 6px rgba(20,40,60,.18);display:grid;place-items:center}
+.mapbtn.on{background:var(--sign);color:#fff;border-color:var(--sign)}
+.mapbtn.manual{background:var(--warn);color:#fff;border-color:var(--warn)}
+
+/* ピン */
+.pin{position:relative;display:block;width:22px;height:22px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);
+  background:var(--c);border:2.5px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.4)}
+.pin.part::before{content:"";position:absolute;left:5px;top:5px;width:7px;height:7px;border-radius:50%;background:#fff}
+.pin.full{background:#fff;border-color:var(--c);box-shadow:0 1px 2px rgba(0,0,0,.25)}
+.pin.full::after{content:"";position:absolute;left:6px;top:4px;width:5px;height:10px;border:solid var(--done);border-width:0 2.5px 2.5px 0;transform:rotate(90deg)}
+.pin.sel{outline:3px solid var(--warn);outline-offset:1px}
+.me{width:16px;height:16px;border-radius:50%;background:#1E88E5;border:3px solid #fff;box-shadow:0 0 0 3px rgba(30,136,229,.3)}
+
+/* ボタン */
+.btn{border:1px solid var(--line);background:var(--plate);border-radius:9px;padding:9px 13px;font-size:13px;font-weight:600;color:var(--ink);text-decoration:none;display:inline-flex;align-items:center;gap:4px}
+.btn.primary{background:var(--sign);border-color:var(--sign);color:#fff}
+.btn.ghost{background:transparent}
+.btn.danger{color:var(--danger);border-color:#E5C3C0}
+.btn.sm{padding:6px 10px;font-size:12px}
+.btn:active{transform:translateY(1px)}
+
+/* 下シート */
+#sheet{flex:0 0 auto;background:var(--plate);border-top:1px solid var(--line);box-shadow:0 -3px 14px rgba(20,40,60,.1);
+  display:flex;flex-direction:column;height:128px;max-height:70dvh;transition:height .22s ease;padding-bottom:env(safe-area-inset-bottom)}
+#sheet.open{height:70dvh}
+.handle{display:flex;align-items:center;gap:10px;width:100%;background:none;border:0;padding:10px 14px 8px;text-align:left}
+.grip{width:34px;height:4px;border-radius:2px;background:var(--line);flex:0 0 auto}
+.handle .lbl{font-size:13px;color:var(--ink-soft);flex:1}
+.handle .lbl b{color:var(--ink);font-variant-numeric:tabular-nums}
+#search{margin:0 14px 8px;padding:9px 11px;border:1px solid var(--line);border-radius:9px;background:var(--road);width:calc(100% - 28px)}
+#list,#detail{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch}
+#list{padding:0 0 14px}
+.row{display:flex;align-items:center;gap:11px;padding:11px 14px;border-top:1px solid var(--line-soft);width:100%;background:none;border-left:0;border-right:0;border-bottom:0;text-align:left}
+.row .bar{width:4px;align-self:stretch;border-radius:2px;background:var(--c);flex:0 0 auto}
+.row .body{flex:1;min-width:0}
+.row .nm{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row.full .nm{color:var(--ink-soft)}
+.row .meta{font-size:11.5px;color:var(--ink-soft);margin-top:2px}
+.badges{display:flex;gap:3px;flex:0 0 auto}
+.bd{min-width:20px;height:20px;border-radius:5px;font-size:11px;font-weight:700;display:grid;place-items:center;
+  border:1.5px solid var(--line);color:var(--ink-soft);padding:0 3px;background:#fff}
+.bd.on{background:var(--c);border-color:var(--c);color:#fff}
+.more{display:block;margin:12px auto;}
+.empty{padding:26px 22px;color:var(--ink-soft);font-size:13.5px;line-height:1.8;text-align:center}
+
+/* 地点詳細 */
+#detail{display:none;padding:0 16px 18px}
+#sheet.detail #list,#sheet.detail #search{display:none}
+#sheet.detail #detail{display:block}
+.dhead{display:flex;align-items:flex-start;gap:10px;margin-bottom:6px}
+.dhead h2{font-size:17px;margin:0;flex:1;line-height:1.4}
+.dmeta{font-size:12px;color:var(--ink-soft);line-height:1.7;margin-bottom:10px}
+.dlinks{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.sect{font-size:12px;color:var(--ink-soft);font-weight:700;letter-spacing:.06em;margin:16px 0 6px}
+.crow{display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid var(--line-soft)}
+.crow .cl{flex:1;min-width:0}
+.crow .cn{font-size:14px;font-weight:600}
+.crow .cs{font-size:11.5px;color:var(--ink-soft);margin-top:2px}
+.crow .cs.got{color:var(--done)}
+.tbtn{flex:0 0 auto;border:2px solid var(--line);background:#fff;border-radius:999px;padding:7px 12px;font-size:12.5px;font-weight:700;color:var(--ink-soft)}
+.tbtn[aria-pressed="true"]{background:var(--done);border-color:var(--done);color:#fff}
+.visit{padding:10px 0;border-top:1px solid var(--line-soft);display:flex;gap:10px;align-items:flex-start}
+.visit .vb{flex:1;min-width:0}
+.visit .vd{font-size:13px;font-weight:700;font-variant-numeric:tabular-nums}
+.visit .vi{font-size:12.5px;margin-top:2px;line-height:1.6}
+.visit .vn{font-size:12.5px;color:var(--ink-soft);margin-top:3px;white-space:pre-wrap;line-height:1.6}
+
+/* ダイアログ */
+dialog{border:0;border-radius:14px;padding:0;width:min(560px,94vw);max-height:90dvh;color:var(--ink);background:var(--plate)}
+dialog::backdrop{background:rgba(10,25,40,.5)}
+.dlg{display:flex;flex-direction:column;max-height:90dvh}
+.dlg h2{margin:0;padding:16px 18px 12px;font-size:16px;border-bottom:1px solid var(--line)}
+.dlg .content{padding:14px 18px;overflow-y:auto;flex:1}
+.dlg .foot{display:flex;gap:8px;justify-content:flex-end;padding:12px 18px;border-top:1px solid var(--line);flex-wrap:wrap}
+label.l{display:block;font-size:12px;color:var(--ink-soft);margin:0 0 5px}
+.f{margin-bottom:13px}
+.f input:not([type=checkbox]),.f select,.f textarea{width:100%;padding:10px 11px;border:1px solid var(--line);border-radius:9px;background:#fff}
+.f textarea{min-height:80px;resize:vertical;font-size:13px;line-height:1.6}
+.two{display:flex;gap:10px}.two>*{flex:1}
+.chk{display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid var(--line-soft);font-size:14px}
+.chk input{width:20px;height:20px;flex:0 0 auto}
+.chk .no{margin-left:auto;width:120px;padding:7px 9px;border:1px solid var(--line);border-radius:8px}
+.help{font-size:12px;line-height:1.75;color:var(--ink-soft);margin:0 0 12px}
+.msg{font-size:12.5px;color:var(--done);min-height:18px;margin-top:8px}
+.msg.err{color:var(--danger)}
+#ioOut{width:100%;min-height:110px;font-family:ui-monospace,monospace;font-size:11px;border:1px solid var(--line);border-radius:9px;padding:9px;display:none}
+
+/* 進捗 */
+.tabs{display:flex;gap:6px;margin-bottom:12px}
+.tab{flex:1;border:1px solid var(--line);background:#fff;border-radius:9px;padding:8px;font-size:13px;font-weight:600;color:var(--ink-soft)}
+.tab[aria-selected="true"]{background:var(--sign);border-color:var(--sign);color:#fff}
+.pg-h{font-size:12px;font-weight:700;color:var(--ink-soft);letter-spacing:.06em;margin:14px 0 4px}
+.pg{display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--line-soft);width:100%;background:none;border-left:0;border-right:0;border-bottom:0;text-align:left}
+.pg .pn{width:84px;flex:0 0 auto;font-size:13.5px;font-weight:600}
+.pg .pb{flex:1;height:9px;border-radius:5px;background:var(--line-soft);overflow:hidden}
+.pg .pb i{display:block;height:100%;background:var(--c,var(--sign));border-radius:5px}
+.pg .pv{width:92px;flex:0 0 auto;text-align:right;font-size:12px;font-variant-numeric:tabular-nums;color:var(--ink-soft)}
+.pg .pv b{color:var(--ink);font-size:13px}
+.pg.sum .pn{font-weight:800}
+.rally{border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-bottom:10px}
+.rally h3{margin:0 0 2px;font-size:14px}
+.rally .rs{font-size:11.5px;color:var(--ink-soft);margin-bottom:4px}
+.rally .pg .pn{width:64px}
+
+/* エリア選択バー */
+#pickBar{position:absolute;left:8px;right:8px;top:8px;z-index:600;display:none;background:var(--plate);border:2px solid var(--sign);
+  border-radius:12px;padding:9px 10px;box-shadow:0 3px 10px rgba(20,40,60,.25);font-size:13px}
+#pickBar.on{display:block}
+#pickBar .pmsg{font-weight:700;margin-bottom:7px;line-height:1.5}
+#pickBar .pmsg small{display:block;font-weight:400;color:var(--ink-soft)}
+#pickBar .pbtns{display:flex;gap:6px;flex-wrap:wrap}
+.tag{display:inline-block;font-size:11px;padding:1px 7px;border-radius:999px;background:var(--line-soft);color:var(--ink-soft);margin-left:6px;vertical-align:1px}
+.addlist{display:flex;flex-direction:column;gap:8px}
+.addlist .btn{justify-content:flex-start;padding:12px 14px;font-size:14px}
+.addlist .btn small{display:block;font-weight:400;color:var(--ink-soft);font-size:11.5px;margin-top:2px}
+.sw{display:inline-block;width:14px;height:14px;border-radius:4px;border:1px solid var(--line);vertical-align:-2px;margin-right:4px}
+#toast{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom) + 20px);transform:translateX(-50%);background:var(--ink);color:#fff;
+  padding:10px 16px;border-radius:999px;font-size:13px;opacity:0;pointer-events:none;transition:opacity .2s;z-index:9999;max-width:88vw;text-align:center}
+#toast.show{opacity:.95}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="hrow">
+      <h1 class="title">収集マップ</h1>
+      <div class="plate"><b id="pDone">0</b><span>/</span><b id="pAll">0</b></div>
+      <button class="iconbtn" id="btnProg" type="button">進捗</button>
+      <button class="iconbtn" id="btnMenu" type="button" aria-label="メニュー">≡</button>
+    </div>
+    <div class="filters" id="filters"></div>
+  </header>
+
+  <div id="mapwrap">
+    <div id="map"></div>
+    <div id="mapfail">地図を読み込めませんでした。<br>一覧と記録はこのまま使えます。</div>
+    <div id="pickBar"><div class="pmsg" id="pickMsg"></div><div class="pbtns" id="pickBtns"></div></div>
+    <div class="mapbtns">
+      <button class="mapbtn" id="btnAddAny" type="button" aria-label="登録">＋</button>
+      <button class="mapbtn" id="btnLoc" type="button" aria-label="現在地">◎</button>
+      <button class="mapbtn" id="btnFit" type="button" aria-label="全体を表示">⤢</button>
+    </div>
+  </div>
+
+  <section id="sheet">
+    <button class="handle" id="handle" type="button" aria-expanded="false">
+      <span class="grip"></span>
+      <span class="lbl" id="sheetLbl"></span>
+      <span id="sheetArrow">▲</span>
+    </button>
+    <input id="search" type="search" placeholder="名前・住所で絞り込み" autocomplete="off">
+    <div id="list"></div>
+    <div id="detail"></div>
+  </section>
+</div>
+
+<!-- 訪問の記録 -->
+<dialog id="dlgVisit"><form method="dialog" class="dlg" id="formVisit">
+  <h2 id="vTitle">訪問を記録</h2>
+  <div class="content">
+    <div class="f"><label class="l" for="vDate">訪問日</label><input type="date" id="vDate" required></div>
+    <label class="l">この訪問で手に入れたもの</label>
+    <div id="vItems"></div>
+    <div class="f" style="margin-top:12px"><label class="l" for="vNote">コメント</label><textarea id="vNote" placeholder="スタンプの場所、売り切れ、同行者など"></textarea></div>
+    <div class="msg err" id="vMsg"></div>
+  </div>
+  <div class="foot">
+    <button class="btn danger" id="vDel" type="button">この記録を削除</button>
+    <button class="btn ghost" type="button" data-close>やめる</button>
+    <button class="btn primary" type="submit">保存する</button>
+  </div>
+</form></dialog>
+
+<!-- 進捗 -->
+<dialog id="dlgProg"><div class="dlg">
+  <h2>進捗</h2>
+  <div class="content">
+    <div class="tabs" role="tablist">
+      <button class="tab" role="tab" data-tab="area" aria-selected="true" type="button">地方・都府県</button>
+      <button class="tab" role="tab" data-tab="rally" aria-selected="false" type="button">道の駅スタンプ帳</button>
+    </div>
+    <div id="progArea">
+      <div class="f"><select id="progKind"></select></div>
+      <div id="progAreaBody"></div>
+    </div>
+    <div id="progRally" hidden></div>
+  </div>
+  <div class="foot"><button class="btn" type="button" data-close>閉じる</button></div>
+</div></dialog>
+
+<!-- メニュー -->
+<dialog id="dlgMenu"><div class="dlg">
+  <h2>保存・読み込み</h2>
+  <div class="content">
+    <p class="help">記録はこの端末に自動保存されます。念のため、旅の前後にバックアップを書き出しておいてください。旧版（HTMLファイル版）のバックアップもここから読み込めます。</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+      <button class="btn" id="btnExport" type="button">バックアップを書き出す</button>
+      <button class="btn" id="btnShowJson" type="button">文字で表示</button>
+    </div>
+    <textarea id="ioOut" readonly></textarea>
+    <div class="f" style="margin-top:14px"><label class="l" for="ioFile">バックアップを読み込む（旧版・新版どちらも可）</label>
+      <input type="file" id="ioFile" accept=".json,application/json"></div>
+    <div class="f"><label class="l" for="ioIn">または貼り付け</label><textarea id="ioIn"></textarea></div>
+    <button class="btn primary" id="btnImport" type="button">読み込む</button>
+    <div class="msg" id="ioMsg"></div>
+    <p class="help" style="margin-top:18px">地点を追加するときは、地図を長押ししてください。</p>
+    <p class="help" id="aboutData"></p>
+  </div>
+  <div class="foot"><button class="btn" type="button" data-close>閉じる</button></div>
+</div></dialog>
+
+<!-- 地点の追加 -->
+<dialog id="dlgPlace"><form method="dialog" class="dlg" id="formPlace">
+  <h2>地点を追加</h2>
+  <div class="content">
+    <div class="f"><label class="l" for="plName">名前</label><input id="plName" required></div>
+    <div class="two">
+      <div class="f"><label class="l" for="plLat">緯度</label><input id="plLat" inputmode="decimal" required></div>
+      <div class="f"><label class="l" for="plLng">経度</label><input id="plLng" inputmode="decimal" required></div>
+    </div>
+    <div class="f"><label class="l" for="plNote">メモ</label><textarea id="plNote"></textarea></div>
+  </div>
+  <div class="foot">
+    <button class="btn ghost" type="button" data-close>やめる</button>
+    <button class="btn primary" type="submit">追加する</button>
+  </div>
+</form></dialog>
+
+<!-- 登録メニュー -->
+<dialog id="dlgAdd"><div class="dlg">
+  <h2>登録する</h2>
+  <div class="content addlist">
+    <button class="btn" type="button" data-add="gomi">ゴミ袋<small>自治体をタップして選ぶ。複数選べば清掃組合などのまとまりに</small></button>
+    <button class="btn" type="button" data-add="yuruArea">ゆるキャラグッズ（エリア）<small>地域・自治体・自治体の一部など。範囲を描くこともできます</small></button>
+    <button class="btn" type="button" data-add="yuruPoint">ゆるキャラグッズ（地点）<small>施設・会社など。地図をタップして場所を指定</small></button>
+    <button class="btn" type="button" data-add="place">その他の地点<small>地図の長押しでも追加できます</small></button>
+  </div>
+  <div class="foot"><button class="btn" type="button" data-close>閉じる</button></div>
+</div></dialog>
+
+<!-- ゴミ袋 -->
+<dialog id="dlgGomi"><form method="dialog" class="dlg" id="formGomi">
+  <h2 id="gTitle">ゴミ袋を登録</h2>
+  <div class="content">
+    <div class="f" id="gAreaWrap"><label class="l" for="gArea">エリアの名前</label><input id="gArea" placeholder="〇〇市、〇〇清掃組合 など"></div>
+    <div class="two">
+      <div class="f"><label class="l" for="gType">ごみの種別</label><input id="gType" list="dlType" placeholder="可燃ごみ"></div>
+      <div class="f"><label class="l" for="gSize">袋の大きさ</label><input id="gSize" list="dlSize" placeholder="45L"></div>
+    </div>
+    <div class="two">
+      <div class="f"><label class="l" for="gColor">袋の色</label><input id="gColor" list="dlColor" placeholder="黄色"></div>
+      <div class="f"><label class="l" for="gDate">入手日</label><input type="date" id="gDate"></div>
+    </div>
+    <div class="f"><label class="l" for="gNote">コメント</label><textarea id="gNote" placeholder="購入した店、枚数、デザインなど"></textarea></div>
+    <div class="msg err" id="gMsg"></div>
+  </div>
+  <div class="foot">
+    <button class="btn danger" id="gDel" type="button">この袋を削除</button>
+    <button class="btn ghost" type="button" data-close>やめる</button>
+    <button class="btn primary" type="submit">保存する</button>
+  </div>
+</form></dialog>
+
+<!-- ゆるキャラグッズ -->
+<dialog id="dlgYuru"><form method="dialog" class="dlg" id="formYuru">
+  <h2 id="yTitle">ゆるキャラグッズを登録</h2>
+  <div class="content">
+    <div class="f" id="yTargetWrap"><label class="l" for="yTarget" id="yTargetLbl">エリアの名前</label><input id="yTarget"></div>
+    <div class="f"><label class="l" for="yChara">キャラクター名</label><input id="yChara" list="dlChara" placeholder="〇〇ちゃん"></div>
+    <div class="f"><label class="l" for="yItem">グッズ</label><input id="yItem" list="dlItem" placeholder="キーホルダー、缶バッジなど"></div>
+    <div class="f"><label class="l" for="yDate">入手日</label><input type="date" id="yDate"></div>
+    <div class="f"><label class="l" for="yNote">コメント</label><textarea id="yNote" placeholder="値段、限定品、どこで買ったか など"></textarea></div>
+    <div class="msg err" id="yMsg"></div>
+  </div>
+  <div class="foot">
+    <button class="btn danger" id="yDel" type="button">このグッズを削除</button>
+    <button class="btn ghost" type="button" data-close>やめる</button>
+    <button class="btn primary" type="submit">保存する</button>
+  </div>
+</form></dialog>
+
+<datalist id="dlType"><option value="可燃ごみ"><option value="燃やせるごみ"><option value="不燃ごみ"><option value="燃やせないごみ"><option value="プラスチック"><option value="容器包装プラスチック"><option value="資源ごみ"><option value="びん・缶"><option value="ペットボトル"><option value="紙類"><option value="粗大ごみ"><option value="事業系"></datalist>
+<datalist id="dlSize"><option value="5L"><option value="10L"><option value="15L"><option value="20L"><option value="30L"><option value="40L"><option value="45L"><option value="50L"><option value="70L"><option value="特小"><option value="小"><option value="中"><option value="大"><option value="特大"></datalist>
+<datalist id="dlColor"><option value="透明"><option value="半透明"><option value="白"><option value="黄色"><option value="青"><option value="水色"><option value="緑"><option value="赤"><option value="ピンク"><option value="オレンジ"><option value="紫"><option value="茶"><option value="灰色"><option value="黒"></datalist>
+<datalist id="dlChara"></datalist>
+<datalist id="dlItem"><option value="キーホルダー"><option value="缶バッジ"><option value="ステッカー"><option value="ぬいぐるみ"><option value="マスコット"><option value="ピンバッジ"><option value="アクリルスタンド"><option value="クリアファイル"><option value="マグネット"><option value="手ぬぐい"><option value="お菓子"></datalist>
+
+<div id="toast" role="status" aria-live="polite"></div>
+<script src="vendor/leaflet.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
