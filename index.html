@@ -176,6 +176,25 @@ label.l{display:block;font-size:12px;color:var(--ink-soft);margin:0 0 5px}
 .nres .amb label{display:inline-flex;align-items:center;gap:5px;margin:3px 10px 3px 0;font-size:13px}
 .nres .amb input{width:18px;height:18px}
 #addCtx{display:none;font-size:12.5px;color:var(--ink-soft);margin:0 0 4px}
+/* 日付の1タップ入力・写真・旅程 */
+.dchips{display:flex;gap:6px;flex-wrap:wrap;margin:-4px 0 12px}
+.dchip{border:1px solid var(--line);background:#fff;border-radius:999px;padding:5px 10px;font-size:12px;font-weight:600;color:var(--ink-soft)}
+.dchip.on{background:var(--sign);border-color:var(--sign);color:#fff}
+.thumbs{display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 8px}
+.thumb{position:relative;width:72px;height:72px;border-radius:8px;overflow:hidden;background:var(--line-soft);border:1px solid var(--line)}
+.thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.thumb .x{position:absolute;right:2px;top:2px;width:22px;height:22px;border-radius:50%;border:0;background:rgba(0,0,0,.6);color:#fff;font-size:12px;line-height:22px;padding:0}
+.thumb.wait{display:grid;place-items:center;font-size:11px;color:var(--ink-soft)}
+.pending{color:var(--warn)!important;font-weight:700}
+.trow{display:block;width:100%;text-align:left;background:none;border:0;border-top:1px solid var(--line-soft);padding:11px 2px}
+.trow b{font-size:14px}.trow small{display:block;color:var(--ink-soft);font-size:12px;margin-top:2px}
+.dayh{font-size:12.5px;font-weight:700;margin:14px 0 2px;color:var(--sign-dark)}
+.titem{display:flex;gap:8px;align-items:flex-start;width:100%;text-align:left;background:none;border:0;border-top:1px solid var(--line-soft);padding:8px 2px;font-size:13px;line-height:1.5}
+.titem .dot{width:8px;height:8px;border-radius:50%;background:var(--c);margin-top:6px;flex:0 0 auto}
+.cand{display:flex;gap:10px;align-items:flex-start;padding:9px 0;border-top:1px solid var(--line-soft);font-size:13.5px;line-height:1.5}
+.cand input{width:20px;height:20px;margin-top:2px;flex:0 0 auto}
+.cand small{display:block;color:var(--ink-soft);font-size:11.5px}
+#phView{max-width:100%;max-height:70dvh;display:block;margin:0 auto;border-radius:8px}
 #toast{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom) + 20px);transform:translateX(-50%);background:var(--ink);color:#fff;
   padding:10px 16px;border-radius:999px;font-size:13px;opacity:0;pointer-events:none;transition:opacity .2s;z-index:9999;max-width:88vw;text-align:center}
 #toast.show{opacity:.95}
@@ -188,6 +207,7 @@ label.l{display:block;font-size:12px;color:var(--ink-soft);margin:0 0 5px}
     <div class="hrow">
       <h1 class="title">収集マップ</h1>
       <div class="plate"><b id="pDone">0</b><span>/</span><b id="pAll">0</b></div>
+      <button class="iconbtn" id="btnTrip" type="button">旅程</button>
       <button class="iconbtn" id="btnProg" type="button">進捗</button>
       <button class="iconbtn" id="btnMenu" type="button" aria-label="メニュー">≡</button>
     </div>
@@ -222,8 +242,14 @@ label.l{display:block;font-size:12px;color:var(--ink-soft);margin:0 0 5px}
   <h2 id="vTitle">訪問を記録</h2>
   <div class="content">
     <div class="f"><label class="l" for="vDate">訪問日</label><input type="date" id="vDate" required></div>
+    <div class="dchips" id="vDateChips"></div>
     <label class="l">この訪問で手に入れたもの</label>
     <div id="vItems"></div>
+    <div style="margin-top:12px"><label class="l" id="vPhLbl">写真</label>
+      <div class="thumbs" id="vThumbs"></div>
+      <label class="btn sm" for="vPhotoIn" style="cursor:pointer">写真を追加</label>
+      <input type="file" id="vPhotoIn" accept="image/*" multiple style="display:none">
+    </div>
     <div class="f" style="margin-top:12px"><label class="l" for="vNote">コメント</label><textarea id="vNote" placeholder="スタンプの場所、売り切れ、同行者など"></textarea></div>
     <div class="msg err" id="vMsg"></div>
   </div>
@@ -266,6 +292,14 @@ label.l{display:block;font-size:12px;color:var(--ink-soft);margin:0 0 5px}
     <div class="f"><label class="l" for="ioIn">または貼り付け</label><textarea id="ioIn"></textarea></div>
     <button class="btn primary" id="btnImport" type="button">読み込む</button>
     <div class="msg" id="ioMsg"></div>
+    <div class="sect" style="margin-top:22px">写真と軌跡</div>
+    <p class="help">写真と旅程の軌跡は容量が大きいので、上のバックアップとは別のファイル（zip）になります。</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn" id="btnMediaExport" type="button">写真と軌跡を書き出す</button>
+      <label class="btn" for="mediaIn" style="cursor:pointer">写真と軌跡を読み込む</label>
+      <input type="file" id="mediaIn" accept=".zip,application/zip" style="display:none">
+    </div>
+    <div class="msg" id="mediaMsg"></div>
     <p class="help" style="margin-top:18px">地点を追加するときは、地図を長押ししてください。</p>
     <p class="help" id="aboutData"></p>
   </div>
@@ -302,6 +336,72 @@ label.l{display:block;font-size:12px;color:var(--ink-soft);margin:0 0 5px}
   <div class="foot"><button class="btn" type="button" data-close>閉じる</button></div>
 </div></dialog>
 
+<!-- 記録日 -->
+<dialog id="dlgWork"><div class="dlg">
+  <h2>記録日を設定</h2>
+  <div class="content">
+    <p class="help">ここで決めた日付で、各地点の日付ボタンが記録します。過去の分をまとめて登録するときに使ってください。アプリを開き直すと今日に戻ります。</p>
+    <div class="f"><input type="date" id="wDate"></div>
+    <div class="dchips" id="wDateChips"></div>
+  </div>
+  <div class="foot">
+    <button class="btn" type="button" id="wToday">今日に戻す</button>
+    <button class="btn ghost" type="button" data-close>やめる</button>
+    <button class="btn primary" type="button" id="wOk">この日で記録する</button>
+  </div>
+</div></dialog>
+
+<!-- 旅程の一覧 -->
+<dialog id="dlgTrips"><div class="dlg">
+  <h2>旅程</h2>
+  <div class="content"><div id="tripList"></div></div>
+  <div class="foot">
+    <button class="btn ghost" type="button" data-close>閉じる</button>
+    <button class="btn primary" type="button" id="tripNew">新しい旅程</button>
+  </div>
+</div></dialog>
+
+<!-- 旅程の編集 -->
+<dialog id="dlgTrip"><form method="dialog" class="dlg" id="formTrip">
+  <h2 id="tTitle">新しい旅程</h2>
+  <div class="content">
+    <div class="f"><label class="l" for="tName">旅程の名前</label><input id="tName" placeholder="2026年秋 東北ドライブ"></div>
+    <div class="two">
+      <div class="f"><label class="l" for="tD1">開始日</label><input type="date" id="tD1"></div>
+      <div class="f"><label class="l" for="tD2">終了日</label><input type="date" id="tD2"></div>
+    </div>
+    <div class="f"><label class="l" for="tNote">メモ</label><textarea id="tNote"></textarea></div>
+    <p class="help">この期間の訪問記録・ゴミ袋・ゆるキャラグッズが、旅程に自動で入ります。</p>
+    <div class="msg err" id="tMsg"></div>
+  </div>
+  <div class="foot">
+    <button class="btn danger" id="tDel" type="button">旅程を削除</button>
+    <button class="btn ghost" type="button" data-close>やめる</button>
+    <button class="btn primary" type="submit">保存する</button>
+  </div>
+</form></dialog>
+
+<!-- 立ち寄り候補 -->
+<dialog id="dlgCand"><div class="dlg">
+  <h2>立ち寄り候補</h2>
+  <div class="content">
+    <p class="help">軌跡で一定時間とどまった場所の近くにある地点です。登録するものにチェックを入れてください。道の駅はスタンプ、SA・PAはハイウェイスタンプ、ポケふたは訪問として記録します（ポケふたは写真を追加すると完了）。</p>
+    <div id="candList"></div>
+  </div>
+  <div class="foot">
+    <button class="btn ghost" type="button" data-close>やめる</button>
+    <button class="btn primary" type="button" id="candOk">チェックしたものを登録</button>
+  </div>
+</div></dialog>
+
+<!-- 写真の表示 -->
+<dialog id="dlgPhoto"><div class="dlg">
+  <div class="content"><img id="phView" alt=""></div>
+  <div class="foot"><button class="btn" type="button" data-close>閉じる</button></div>
+</div></dialog>
+
+<input type="file" id="trackIn" accept=".json,.gpx,application/json,application/gpx+xml" style="display:none">
+
 <!-- 自治体を名前で指定 -->
 <dialog id="dlgNames"><div class="dlg">
   <h2 id="nTitle">自治体を名前で指定</h2>
@@ -331,6 +431,7 @@ label.l{display:block;font-size:12px;color:var(--ink-soft);margin:0 0 5px}
       <div class="f"><label class="l" for="gColor">袋の色</label><input id="gColor" list="dlColor" placeholder="黄色"></div>
       <div class="f"><label class="l" for="gDate">入手日</label><input type="date" id="gDate"></div>
     </div>
+    <div class="dchips" id="gDateChips"></div>
     <div class="f"><label class="l" for="gNote">コメント</label><textarea id="gNote" placeholder="購入した店、枚数、デザインなど"></textarea></div>
     <div class="msg err" id="gMsg"></div>
   </div>
@@ -349,6 +450,7 @@ label.l{display:block;font-size:12px;color:var(--ink-soft);margin:0 0 5px}
     <div class="f"><label class="l" for="yChara">キャラクター名</label><input id="yChara" list="dlChara" placeholder="〇〇ちゃん"></div>
     <div class="f"><label class="l" for="yItem">グッズ</label><input id="yItem" list="dlItem" placeholder="キーホルダー、缶バッジなど"></div>
     <div class="f"><label class="l" for="yDate">入手日</label><input type="date" id="yDate"></div>
+    <div class="dchips" id="yDateChips"></div>
     <div class="f"><label class="l" for="yNote">コメント</label><textarea id="yNote" placeholder="値段、限定品、どこで買ったか など"></textarea></div>
     <div class="msg err" id="yMsg"></div>
   </div>
