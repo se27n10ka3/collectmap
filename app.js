@@ -49,9 +49,10 @@ var KEY = "collectmap.v2";
 
 /* ================= 状態 ================= */
 var MASTER = [], PLACES = [], byId = {};
-var user = {version:2, visits:[], custom:[], areas:[], gomi:[], yuru:[]};
+var user = {version:2, visits:[], custom:[], areas:[], gomi:[], yuru:[], trips:[]};
 var got = {};   // got[pid][type] = {n, last, nos:[]}
-var gotR = {};  // 国道ステッカーは番号単位 gotR["r23"] = {n, last, where:[pid]}
+var gotR = {};
+var pendPf = {};  // ポケふた：訪問済みで写真がないもの  // 国道ステッカーは番号単位 gotR["r23"] = {n, last, where:[pid]}
 var filt = {g:{me:true,hw:true,pf:true,rt:true,cu:true,yu:true,gm:true}, meMode:"all", undone:false, q:""};
 var me = null, watchId = null, manual = false, lastFix = null, lastFixT = 0;
 var map = null, mapOK = false, markers = {}, meMarker = null;
@@ -86,7 +87,7 @@ function load(){
     var raw = localStorage.getItem(KEY);
     if(raw){
       var d = JSON.parse(raw);
-      if(d && Array.isArray(d.visits)) user = {version:2, visits:d.visits, custom:d.custom || [], areas:d.areas || [], gomi:d.gomi || [], yuru:d.yuru || []};
+      if(d && Array.isArray(d.visits)) user = {version:2, visits:d.visits, custom:d.custom || [], areas:d.areas || [], gomi:d.gomi || [], yuru:d.yuru || [], trips:d.trips || []};
     }
   }catch(e){}
 }
@@ -104,11 +105,12 @@ function rebuildPlaces(){
 function isR(t){ return /^r\d+$/.test(t); }
 function rebuildGot(){
   rebuildExtra();
-  got = {}; gotR = {};
+  got = {}; gotR = {}; pendPf = {};
   user.visits.forEach(function(v){
     if(v.del) return;
     var g = got[v.pid] || (got[v.pid] = {});
     Object.keys(v.g || {}).forEach(function(t){
+      if(t === "pf" && !(v.ph && v.ph.length)){ pendPf[v.pid] = (pendPf[v.pid] || 0) + 1; return; }
       var e = g[t] || (g[t] = {n:0, last:"", nos:[]});
       e.n++;
       if(v.d > e.last) e.last = v.d;
@@ -176,7 +178,7 @@ function makeChip(label, color, onclick){
   var b = document.createElement("button");
   b.type = "button"; b.className = "chip";
   b.style.setProperty("--c", color);
-  b.innerHTML = '<span class="dot"></span>' + esc(label);
+  b.innerHTML = '<span class="dot"></span><span>' + esc(label) + "</span>";
   b.onclick = onclick;
   return b;
 }
@@ -184,7 +186,8 @@ function setPressed(el, on){ var v = on ? "true" : "false"; if(el.getAttribute("
 function renderFilters(){
   var groups = presentGroups(), sig = groups.join(",");
   if(!FILT || sig !== FILT_SIG){
-    var w = $("filters"); w.innerHTML = ""; FILT = {chips:{}, sel:null, undone:null}; FILT_SIG = sig;
+    var w = $("filters"); w.innerHTML = ""; FILT = {chips:{}, sel:null, undone:null, work:null}; FILT_SIG = sig;
+    FILT.work = makeChip("記録日: 今日", "#E5A100", openWork); w.appendChild(FILT.work);
     groups.forEach(function(g){
       var b = makeChip(GROUPS[g].label, GROUPS[g].color, function(){ filt.g[g] = !filt.g[g]; listLimit = 100; renderAll(); });
       FILT.chips[g] = b; w.appendChild(b);
@@ -206,6 +209,9 @@ function renderFilters(){
   }
   Object.keys(FILT.chips).forEach(function(g){ setPressed(FILT.chips[g], filt.g[g]); });
   setPressed(FILT.undone, filt.undone);
+  setPressed(FILT.work, !!workDate);
+  var wl = FILT.work.lastChild, wt = "記録日: " + (workDate ? dayLabel(workDate) : "今日");
+  if(wl.textContent !== wt) wl.textContent = wt;
   if(FILT.sel){
     if(FILT.sel.value !== filt.meMode) FILT.sel.value = filt.meMode;
     if(FILT.sel.disabled !== !filt.g.me) FILT.sel.disabled = !filt.g.me;
@@ -259,9 +265,10 @@ function renderList(list){
     el.appendChild(m);
   }
 }
+function isPending(p, st){ return st.done < st.tot && !!pendPf[p.id] && scopeTypes(p).indexOf("pf") >= 0; }
 function pinHtml(p){
   var st = stateOf(p);
-  var cls = st.done === 0 ? "" : (st.done === st.tot ? " full" : " part");
+  var cls = st.done === st.tot ? " full" : ((st.done || isPending(p, st)) ? " part" : "");
   if(p.id === selId) cls += " sel";
   return '<span class="pin' + cls + '" style="--c:' + (KIND_COLOR[p.k] || GROUPS.cu.color) + '"></span>';
 }
@@ -269,7 +276,7 @@ var dots = {}, DOT_ZOOM = 9;
 function dotStyle(p){
   var st = stateOf(p), c = KIND_COLOR[p.k] || GROUPS.cu.color;
   if(st.done === st.tot) return {radius:4, color:c, weight:1.5, fillColor:"#fff", fillOpacity:1};
-  return {radius:4, color:"#fff", weight:1, fillColor:c, fillOpacity: st.done ? 0.55 : 1};
+  return {radius:4, color:"#fff", weight:1, fillColor:c, fillOpacity: (st.done || isPending(p, st)) ? 0.55 : 1};
 }
 function renderMarkers(list){
   if(!mapOK) return;
@@ -314,6 +321,7 @@ function renderAll(){
   renderAreas();
   if(selId) renderDetail();
   else if(selArea) renderAreaDetail();
+  else if(selTrip) renderTripDetail();
 }
 
 /* ================= 地点詳細 ================= */
@@ -324,6 +332,7 @@ function openSheet(on){
   if(mapOK) setTimeout(function(){ map.invalidateSize(); }, 240);
 }
 function select(pid, pan){
+  if(selTrip){ tripReturn = selTrip; selTrip = null; }
   selId = pid; selArea = null;
   var p = byId[pid]; if(!p) return;
   $("sheet").classList.add("detail");
@@ -333,7 +342,8 @@ function select(pid, pan){
   if(pan && mapOK) map.setView([p.la, p.lo], Math.max(map.getZoom(), 13));
 }
 function closeDetail(){
-  selId = null; selArea = null;
+  selId = null; selArea = null; selTrip = null; tripReturn = null;
+  if(tripLayer) tripLayer.clearLayers();
   $("sheet").classList.remove("detail");
   renderAll();
 }
@@ -342,7 +352,7 @@ function visitsOf(pid){
     .sort(function(a,b){ return (b.d + b.ua).localeCompare(a.d + a.ua); });
 }
 function todayVisit(pid){
-  var t = today();
+  var t = curDate();
   var vs = visitsOf(pid).filter(function(v){ return v.d === t; });
   return vs[0] || null;
 }
@@ -350,7 +360,7 @@ function renderDetail(){
   var p = byId[selId], el = $("detail");
   if(!p){ closeDetail(); return; }
   var tv = todayVisit(p.id);
-  var h = '<div class="dhead"><h2>' + esc(p.n) + '</h2><button class="btn sm ghost" type="button" id="dClose" aria-label="閉じる">✕</button></div>';
+  var h = backHtml() + '<div class="dhead"><h2>' + esc(p.n) + '</h2><button class="btn sm ghost" type="button" id="dClose" aria-label="閉じる">✕</button></div>';
   var meta = [p.p];
   if(p.ra) meta.push("帳: " + p.ra);
   h += '<div class="dmeta">' + esc(meta.filter(Boolean).join("・")) + (p.a ? "<br>" + esc(p.a) : "") + (p.h ? "<br>" + esc(p.h) : "") + "</div>";
@@ -368,10 +378,11 @@ function renderDetail(){
     var elsewhere = isR(t) && !e && gotR[t];
     var inToday = !!(tv && tv.g && tv.g[t]);
     var st = e ? ("取得済み・" + e.n + "回・最終 " + fmtDate(e.last) + (e.nos.length ? "・No." + e.nos.map(esc).join(", ") : ""))
-           : (elsewhere ? "取得済み（" + esc((byId[gotR[t].where[0]] || {}).n || "別の店") + "で）" : "未取得");
+           : (elsewhere ? "取得済み（" + esc((byId[gotR[t].where[0]] || {}).n || "別の店") + "で）"
+           : (t === "pf" && pendPf[p.id] ? '訪問済み・<span class="pending">写真待ち</span>' : "未取得"));
     if(elsewhere) e = gotR[t];
     h += '<div class="crow"><div class="cl"><div class="cn">' + esc(tLabel(t)) + '</div><div class="cs' + (e ? " got" : "") + '">' + st + "</div></div>" +
-         '<button class="tbtn" type="button" data-t="' + esc(t) + '" aria-pressed="' + (inToday ? "true" : "false") + '">' + (inToday ? "今日 ✓" : "今日") + "</button></div>";
+         '<button class="tbtn" type="button" data-t="' + esc(t) + '" aria-pressed="' + (inToday ? "true" : "false") + '">' + (inToday ? dayBtn() + " ✓" : dayBtn()) + "</button></div>";
   });
 
   var vs = visitsOf(p.id);
@@ -383,12 +394,14 @@ function renderDetail(){
       return tLabel(t) + (no ? "（No." + no + "）" : "");
     }).join("・");
     h += '<div class="visit"><div class="vb"><div class="vd">' + esc(fmtDate(v.d)) + '</div><div class="vi">' + esc(items || "記録なし") + "</div>" +
-         (v.note ? '<div class="vn">' + esc(v.note) + "</div>" : "") + '</div><button class="btn sm" type="button" data-v="' + esc(v.id) + '">編集</button></div>';
+         (v.note ? '<div class="vn">' + esc(v.note) + "</div>" : "") + ((v.ph && v.ph.length) ? '<div class="thumbs" data-phs="' + esc(v.ph.join(",")) + '"></div>' : "") +
+         '</div><button class="btn sm" type="button" data-v="' + esc(v.id) + '">編集</button></div>';
   });
   var ys = (yuruBy[p.id] || []);
   h += '<div class="sect">ゆるキャラグッズ（' + ys.length + '点）</div>' + yuruListHtml(ys) +
        '<button class="btn sm" type="button" id="dYuru">ゆるキャラグッズを追加</button>';
   el.innerHTML = h;
+  fillPhotoSlots(el); bindBack();
   $("dYuru").onclick = function(){ openYuru({pid:p.id}, null); };
   bindYuruEdit(el);
   $("dClose").onclick = closeDetail;
@@ -413,14 +426,14 @@ function renderDetail(){
 function quickToggle(pid, t){
   var v = todayVisit(pid);
   var on = !!(v && v.g[t]);
-  if(!on && HAS_NO[t]){ openVisit(pid, v ? v.id : null, t); return; }  // きっぷは番号入力へ
+  if(!on && (HAS_NO[t] || t === "pf")){ openVisit(pid, v ? v.id : null, t); return; }  // きっぷは番号、ポケふたは写真の入力へ
   if(v){
     if(on) delete v.g[t]; else v.g[t] = {};
     if(!Object.keys(v.g).length && !v.note) v.del = true;
     v.ua = nowIso();
   }else{
     var g = {}; g[t] = {};
-    user.visits.push({id:"v" + uid(), pid:pid, d:today(), g:g, note:"", ca:nowIso(), ua:nowIso()});
+    user.visits.push({id:"v" + uid(), pid:pid, d:curDate(), g:g, note:"", ca:nowIso(), ua:nowIso()});
   }
   save(); rebuildGot(); renderAll();
   if(!on) toast(tLabel(t) + " を記録しました");
@@ -430,9 +443,11 @@ function quickToggle(pid, t){
 function openVisit(pid, vid, preset){
   var p = byId[pid]; if(!p) return;
   var v = vid ? user.visits.filter(function(x){ return x.id === vid; })[0] : null;
-  editVisit = {pid:pid, id:v ? v.id : null};
+  editVisit = {pid:pid, id:v ? v.id : null, ph:(v && v.ph || []).slice(), add:[], del:[], busy:0};
   $("vTitle").textContent = v ? "訪問記録を編集" : "訪問を記録";
-  $("vDate").value = v ? v.d : today();
+  $("vDate").value = v ? v.d : curDate();
+  renderDateChips("vDateChips", "vDate");
+  renderVThumbs();
   $("vNote").value = v ? (v.note || "") : "";
   $("vMsg").textContent = "";
   $("vDel").style.display = v ? "" : "none";
@@ -471,21 +486,33 @@ $("formVisit").addEventListener("submit", function(e){
     if(no && no.value.trim()) o.no = no.value.trim();
     g[t] = o;
   });
-  var note = $("vNote").value.trim();
-  if(!Object.keys(g).length && !note){ $("vMsg").textContent = "手に入れたものを選ぶか、コメントを入れてください"; return; }
-  if(editVisit.id){
-    var v = user.visits.filter(function(x){ return x.id === editVisit.id; })[0];
-    v.d = d; v.g = g; v.note = note; v.ua = nowIso();
-  }else{
-    user.visits.push({id:"v" + uid(), pid:editVisit.pid, d:d, g:g, note:note, ca:nowIso(), ua:nowIso()});
+  var note = $("vNote").value.trim(), ev = editVisit;
+  if(!Object.keys(g).length && !note && !ev.ph.length && !ev.add.length){ $("vMsg").textContent = "手に入れたものを選ぶか、コメントを入れてください"; return; }
+  if(ev.busy){ $("vMsg").textContent = "写真の処理が終わるまで少し待ってください"; return; }
+  var vid = ev.id || ("v" + uid()), newIds = [];
+  var jobs = ev.add.map(function(a){ var id = "ph" + uid() + newIds.length; newIds.push(id); return idbPut("photos", {id:id, blob:a.blob, pid:ev.pid, vid:vid, ca:nowIso()}); });
+  $("vMsg").textContent = jobs.length ? "写真を保存しています…" : "";
+  function finish(){
+    ev.del.forEach(function(id){ idbDel("photos", id).catch(function(){}); if(PH_URL[id]){ URL.revokeObjectURL(PH_URL[id]); delete PH_URL[id]; } });
+    var ph = ev.ph.concat(newIds);
+    if(ev.id){
+      var v = user.visits.filter(function(x){ return x.id === ev.id; })[0];
+      v.d = d; v.g = g; v.note = note; v.ph = ph; v.ua = nowIso();
+    }else{
+      user.visits.push({id:vid, pid:ev.pid, d:d, g:g, note:note, ph:ph, ca:nowIso(), ua:nowIso()});
+    }
+    save(); rebuildGot(); $("dlgVisit").close(); renderAll();
+    toast(g.pf && !ph.length ? "記録しました（ポケふたは写真を付けると完了）" : "記録しました");
   }
-  save(); rebuildGot(); $("dlgVisit").close(); renderAll(); toast("記録しました");
+  if(!jobs.length){ finish(); return; }
+  Promise.all(jobs).then(finish).catch(function(err){ $("vMsg").textContent = "写真を保存できませんでした：" + err.message; });
 });
 $("vDel").onclick = function(){
   if(!editVisit || !editVisit.id) return;
   if(!confirm("この訪問記録を削除しますか？")) return;
   var v = user.visits.filter(function(x){ return x.id === editVisit.id; })[0];
   v.del = true; v.ua = nowIso();
+  (v.ph || []).forEach(function(id){ idbDel("photos", id).catch(function(){}); });
   save(); rebuildGot(); $("dlgVisit").close(); renderAll(); toast("削除しました");
 };
 
@@ -579,7 +606,7 @@ document.querySelectorAll(".tab").forEach(function(tb){
 /* ================= 読み込み・書き出し ================= */
 function exportJson(){
   return JSON.stringify({app:"collectmap", version:2, exported:nowIso(), visits:user.visits, custom:user.custom,
-    areas:user.areas, gomi:user.gomi, yuru:user.yuru});
+    areas:user.areas, gomi:user.gomi, yuru:user.yuru, trips:user.trips});
 }
 function ioMsg(s, err){ var m = $("ioMsg"); m.textContent = s; m.className = "msg" + (err ? " err" : ""); }
 function mergeV2(d){
@@ -597,7 +624,7 @@ function mergeV2(d){
     if(!ci[c.id]){ user.custom.push(c); ci[c.id] = c; }
     else if((c.ua || "") > (ci[c.id].ua || "")) Object.assign(ci[c.id], c);
   });
-  ["areas","gomi","yuru"].forEach(function(k){
+  ["areas","gomi","yuru","trips"].forEach(function(k){
     var idx = {}; user[k].forEach(function(x){ idx[x.id] = x; });
     (d[k] || []).forEach(function(x){
       if(!x || !x.id) return;
@@ -650,7 +677,7 @@ function migrateV1(items){
       types = ["cu"];
     }
     if(!it.done) return;
-    types = types.filter(function(t){ return !has(p.id, t); });
+    types = types.filter(function(t){ return !has(p.id, t) && !(t === "pf" && pendPf[p.id]); });
     if(!types.length){ skipped++; return; }
     var d = it.doneAt ? ymd(new Date(it.doneAt)) : today();
     var gk = p.id + "|" + d;
@@ -860,6 +887,7 @@ function renderAreas(){
 
 /* ---- エリアの詳細 ---- */
 function selectArea(aid, pan){
+  if(selTrip){ tripReturn = selTrip; selTrip = null; }
   selArea = aid; selId = null;
   $("sheet").classList.add("detail");
   openSheet(true);
@@ -896,7 +924,7 @@ function renderAreaDetail(){
   var a = areaById(selArea), el = $("detail");
   if(!a || a.del){ closeDetail(); return; }
   var units = areaUnits(a);
-  var h = '<div class="dhead"><h2>' + esc(a.n) + '</h2><button class="btn sm ghost" type="button" id="dClose" aria-label="閉じる">✕</button></div>';
+  var h = backHtml() + '<div class="dhead"><h2>' + esc(a.n) + '</h2><button class="btn sm ghost" type="button" id="dClose" aria-label="閉じる">✕</button></div>';
   var comp = units.map(unitName);
   h += '<div class="dmeta">' + esc(areaPrefs(a).join("・")) + (comp.length ? "<br>範囲：" + esc(comp.slice(0,15).join("・")) + (comp.length > 15 ? " ほか" + (comp.length - 15) : "") : "") +
        (a.poly ? "<br>範囲：地図上に描いた範囲" + (comp.length ? "を含む" : "") : "") + "</div>";
@@ -914,7 +942,7 @@ function renderAreaDetail(){
   var ys = yuruByArea[a.id] || [];
   h += '<div class="sect">ゆるキャラグッズ（' + ys.length + '点）</div>' + yuruListHtml(ys) +
        '<button class="btn sm" type="button" id="aYuru">ゆるキャラグッズを追加</button>';
-  el.innerHTML = h;
+  el.innerHTML = h; bindBack();
   $("dClose").onclick = closeDetail;
   $("aGomi").onclick = function(){ openGomi({aid:a.id}, null); };
   $("aYuru").onclick = function(){ openYuru({aid:a.id}, null); };
@@ -942,9 +970,10 @@ function openGomi(target, gid){
   $("gAreaWrap").style.display = target.newArea ? "" : "none";
   $("gArea").value = target.newArea ? target.newArea.name : "";
   $("gType").value = g ? (g.t || "") : ""; $("gSize").value = g ? (g.s || "") : "";
-  $("gColor").value = g ? (g.col || "") : ""; $("gDate").value = g ? (g.d || today()) : today();
+  $("gColor").value = g ? (g.col || "") : ""; $("gDate").value = g ? (g.d || curDate()) : curDate();
   $("gNote").value = g ? (g.note || "") : ""; $("gMsg").textContent = "";
   $("gDel").style.display = g ? "" : "none";
+  renderDateChips("gDateChips", "gDate");
   $("dlgGomi").showModal();
 }
 function createArea(na, name){
@@ -996,8 +1025,9 @@ function openYuru(target, yid){
   var dl = $("dlChara"); dl.innerHTML = "";
   charaNames().forEach(function(n){ var o = document.createElement("option"); o.value = n; dl.appendChild(o); });
   $("yChara").value = y ? (y.ch || "") : ""; $("yItem").value = y ? (y.it || "") : "";
-  $("yDate").value = y ? (y.d || today()) : today(); $("yNote").value = y ? (y.note || "") : "";
+  $("yDate").value = y ? (y.d || curDate()) : curDate(); $("yNote").value = y ? (y.note || "") : "";
   $("yMsg").textContent = ""; $("yDel").style.display = y ? "" : "none";
+  renderDateChips("yDateChips", "yDate");
   $("dlgYuru").showModal();
 }
 $("formYuru").addEventListener("submit", function(e){
@@ -1300,6 +1330,562 @@ document.querySelectorAll("[data-add]").forEach(function(b){
   };
 });
 
+/* ================= 写真・軌跡の保存領域（IndexedDB） ================= */
+var IDBP = null;
+function idb(){
+  if(IDBP) return IDBP;
+  IDBP = new Promise(function(res, rej){
+    if(!window.indexedDB){ rej(new Error("この環境では写真を保存できません")); return; }
+    var r = indexedDB.open("collectmap", 1);
+    r.onupgradeneeded = function(){
+      var db = r.result;
+      if(!db.objectStoreNames.contains("photos")) db.createObjectStore("photos", {keyPath:"id"});
+      if(!db.objectStoreNames.contains("tracks")) db.createObjectStore("tracks", {keyPath:"id"});
+    };
+    r.onsuccess = function(){ res(r.result); };
+    r.onerror = function(){ rej(r.error || new Error("保存領域を開けません")); };
+  });
+  IDBP.catch(function(){ IDBP = null; });
+  return IDBP;
+}
+function idbReq(store, mode, fn){
+  return idb().then(function(db){ return new Promise(function(res, rej){
+    var tx = db.transaction(store, mode), out;
+    var q = fn(tx.objectStore(store));
+    if(q) q.onsuccess = function(){ out = q.result; };
+    tx.oncomplete = function(){ res(out); };
+    tx.onerror = function(){ rej(tx.error || new Error("保存に失敗しました")); };
+    tx.onabort = function(){ rej(tx.error || new Error("保存が中断されました（容量不足の可能性）")); };
+  }); });
+}
+function idbPut(s, o){ return idbReq(s, "readwrite", function(st){ return st.put(o); }); }
+function idbGet(s, id){ return idbReq(s, "readonly", function(st){ return st.get(id); }); }
+function idbDel(s, id){ return idbReq(s, "readwrite", function(st){ return st.delete(id); }); }
+function idbAll(s){ return idbReq(s, "readonly", function(st){ return st.getAll(); }); }
+function readAB(b){ return new Promise(function(res, rej){ var fr = new FileReader(); fr.onload = function(){ res(fr.result); }; fr.onerror = function(){ rej(fr.error); }; fr.readAsArrayBuffer(b); }); }
+function readText(b){ return new Promise(function(res, rej){ var fr = new FileReader(); fr.onload = function(){ res(String(fr.result)); }; fr.onerror = function(){ rej(fr.error); }; fr.readAsText(b); }); }
+
+/* ================= 写真 ================= */
+var PH_URL = {};
+function photoURL(id){
+  if(PH_URL[id]) return Promise.resolve(PH_URL[id]);
+  return idbGet("photos", id).then(function(r){
+    if(!r || !r.blob) return null;
+    PH_URL[id] = URL.createObjectURL(r.blob); return PH_URL[id];
+  }).catch(function(){ return null; });
+}
+function resizeImage(file){
+  if(window.__cmNoResize) return Promise.resolve(file);
+  return new Promise(function(res){
+    var done = false, url = URL.createObjectURL(file), img = new Image();
+    function fin(b){ if(done) return; done = true; try{ URL.revokeObjectURL(url); }catch(e){} res(b || file); }
+    setTimeout(function(){ fin(null); }, 20000);
+    img.onload = function(){
+      try{
+        var s = Math.min(1, 1280 / Math.max(img.naturalWidth, img.naturalHeight));
+        var c = document.createElement("canvas");
+        c.width = Math.max(1, Math.round(img.naturalWidth * s)); c.height = Math.max(1, Math.round(img.naturalHeight * s));
+        c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+        c.toBlob(function(b){ fin(b); }, "image/jpeg", 0.82);
+      }catch(e){ fin(null); }
+    };
+    img.onerror = function(){ fin(null); };
+    img.src = url;
+  });
+}
+function makeThumb(getUrl, onRemove){
+  var d = document.createElement("div"); d.className = "thumb wait"; d.textContent = "…";
+  getUrl().then(function(u){
+    d.textContent = ""; d.classList.remove("wait");
+    if(u){
+      var im = document.createElement("img"); im.src = u; im.alt = ""; d.appendChild(im);
+      d.onclick = function(){ $("phView").src = u; $("dlgPhoto").showModal(); };
+    }else{ d.classList.add("wait"); d.textContent = "端末に無し"; }
+    if(onRemove){
+      var x = document.createElement("button"); x.type = "button"; x.className = "x"; x.textContent = "✕"; x.setAttribute("aria-label","写真を外す");
+      x.onclick = function(e){ e.stopPropagation(); onRemove(); }; d.appendChild(x);
+    }
+  });
+  return d;
+}
+function fillPhotoSlots(el){
+  el.querySelectorAll("[data-phs]").forEach(function(box){
+    (box.getAttribute("data-phs") || "").split(",").filter(Boolean).forEach(function(id){
+      box.appendChild(makeThumb(function(){ return photoURL(id); }, null));
+    });
+  });
+}
+function renderVThumbs(){
+  var ev = editVisit, box = $("vThumbs"); if(!ev) return;
+  box.innerHTML = "";
+  ev.ph.forEach(function(id){
+    box.appendChild(makeThumb(function(){ return photoURL(id); }, function(){
+      ev.ph = ev.ph.filter(function(x){ return x !== id; }); ev.del.push(id); renderVThumbs();
+    }));
+  });
+  ev.add.forEach(function(a){
+    box.appendChild(makeThumb(function(){ return Promise.resolve(a.url); }, function(){
+      ev.add = ev.add.filter(function(x){ return x !== a; }); renderVThumbs();
+    }));
+  });
+  if(ev.busy){ var w = document.createElement("div"); w.className = "thumb wait"; w.textContent = "処理中"; box.appendChild(w); }
+  var p = byId[ev.pid];
+  $("vPhLbl").textContent = "写真" + (p && p.c.indexOf("pf") >= 0 ? "（ポケふたは写真を付けると完了）" : "");
+}
+$("vPhotoIn").onchange = function(){
+  var files = [].slice.call(this.files || []); this.value = "";
+  var ev = editVisit; if(!files.length || !ev) return;
+  ev.busy += files.length; renderVThumbs();
+  files.forEach(function(f){
+    resizeImage(f).then(function(b){
+      ev.add.push({blob:b, url:URL.createObjectURL(b)}); ev.busy--;
+      if(editVisit === ev) renderVThumbs();
+    });
+  });
+};
+
+/* ================= 日付の1タップ入力・記録日 ================= */
+function dayBtn(){ return workDate ? shortDate(workDate) : "今日"; }
+var workDate = null;
+function curDate(){ return workDate || today(); }
+function shortDate(d){ var m = String(d || "").split("-"); return m.length === 3 ? (+m[1]) + "/" + (+m[2]) : String(d || ""); }
+var WD = ["日","月","火","水","木","金","土"];
+function dayLabel(d){ var x = new Date(d + "T00:00:00"); return shortDate(d) + "（" + WD[x.getDay()] + "）"; }
+function lastDate(){
+  var best = null;
+  [user.visits, user.gomi, user.yuru].forEach(function(arr){
+    (arr || []).forEach(function(x){ if(!x.del && x.d && (!best || (x.ua || "") > (best.ua || ""))) best = x; });
+  });
+  return best ? best.d : null;
+}
+function liveTrips(){ return (user.trips || []).filter(function(t){ return !t.del; }).sort(function(a,b){ return (b.d1 || "").localeCompare(a.d1 || ""); }); }
+function tripById(id){ return (user.trips || []).filter(function(t){ return t.id === id; })[0]; }
+function inTrip(t, d){ return !!d && t.d1 <= d && d <= t.d2; }
+function tripsOn(d){ return liveTrips().filter(function(t){ return inTrip(t, d); }); }
+function tripDays(t){
+  var out = [], d = new Date(t.d1 + "T00:00:00"), e = new Date(t.d2 + "T00:00:00");
+  while(d <= e && out.length < 31){ out.push(ymd(d)); d.setDate(d.getDate() + 1); }
+  return out;
+}
+function renderDateChips(boxId, inputId){
+  var box = $(boxId), inp = $(inputId); if(!box || !inp) return;
+  var cur = inp.value, t = today(), list = [["今日", t]];
+  var ld = lastDate();
+  if(ld && ld !== t) list.push(["直前と同じ日 " + shortDate(ld), ld]);
+  if(workDate && workDate !== t && workDate !== ld) list.push(["記録日 " + shortDate(workDate), workDate]);
+  var trip = (selTrip && tripById(selTrip)) || (tripReturn && tripById(tripReturn)) || tripsOn(cur)[0] || tripsOn(curDate())[0] || (ld && tripsOn(ld)[0]);
+  var h = list.map(function(x){ return '<button type="button" class="dchip' + (x[1] === cur ? " on" : "") + '" data-d="' + x[1] + '">' + esc(x[0]) + "</button>"; }).join("");
+  if(trip){
+    var days = tripDays(trip).filter(function(d){ return !list.some(function(x){ return x[1] === d; }); }).slice(0, 12);
+    if(days.length) h += '<span class="help" style="margin:5px 2px 0 4px">' + esc(trip.n) + "：</span>" + days.map(function(d){
+      return '<button type="button" class="dchip' + (d === cur ? " on" : "") + '" data-d="' + d + '">' + esc(shortDate(d)) + "</button>";
+    }).join("");
+  }
+  box.innerHTML = h;
+  box.querySelectorAll("[data-d]").forEach(function(b){ b.onclick = function(){ inp.value = b.getAttribute("data-d"); renderDateChips(boxId, inputId); }; });
+  inp.oninput = function(){ renderDateChips(boxId, inputId); };
+}
+function openWork(){ $("wDate").value = curDate(); renderDateChips("wDateChips", "wDate"); $("dlgWork").showModal(); }
+$("wOk").onclick = function(){
+  var d = $("wDate").value; if(!/^\d{4}-\d{2}-\d{2}$/.test(d)) return;
+  workDate = d === today() ? null : d; $("dlgWork").close(); renderAll();
+  toast(workDate ? dayLabel(workDate) + " の日付で記録します" : "今日の日付で記録します");
+};
+$("wToday").onclick = function(){ workDate = null; $("dlgWork").close(); renderAll(); toast("今日の日付で記録します"); };
+
+/* ================= 旅程 ================= */
+var selTrip = null, tripReturn = null, tripLayer = null, TRK = {}, editTrip = null, candList = [];
+function tripItems(t){
+  var items = [];
+  user.visits.forEach(function(v){ if(!v.del && inTrip(t, v.d)) items.push({d:v.d, o:v.ca || v.ua || "", v:v}); });
+  user.gomi.forEach(function(g){ if(!g.del && inTrip(t, g.d)) items.push({d:g.d, o:g.ca || "", g:g}); });
+  user.yuru.forEach(function(y){ if(!y.del && inTrip(t, y.d)) items.push({d:y.d, o:y.ca || "", y:y}); });
+  return items.sort(function(a,b){ return (a.d + a.o).localeCompare(b.d + b.o); });
+}
+function tripCount(items){
+  return items.reduce(function(s, it){ return s + (it.v ? Object.keys(it.v.g || {}).length : 1); }, 0);
+}
+function openTrips(){
+  var list = liveTrips(), el = $("tripList");
+  if(!list.length) el.innerHTML = '<p class="help">まだ旅程はありません。「新しい旅程」から作ってください。</p>';
+  else{
+    el.innerHTML = "";
+    list.forEach(function(t){
+      var b = document.createElement("button"); b.type = "button"; b.className = "trow";
+      var n = tripDays(t).length, c = tripCount(tripItems(t));
+      b.innerHTML = "<b>" + esc(t.n) + "</b><small>" + esc(fmtDate(t.d1)) + "〜" + esc(fmtDate(t.d2)) + "（" + n + "日）・収集 " + c + " 点</small>";
+      b.onclick = function(){ $("dlgTrips").close(); showTrip(t.id, true); };
+      el.appendChild(b);
+    });
+  }
+  $("dlgTrips").showModal();
+}
+function openTripForm(id){
+  var t = id ? tripById(id) : null;
+  editTrip = t ? t.id : null;
+  $("tTitle").textContent = t ? "旅程を編集" : "新しい旅程";
+  $("tName").value = t ? t.n : ""; $("tD1").value = t ? t.d1 : curDate(); $("tD2").value = t ? t.d2 : curDate();
+  $("tNote").value = t ? (t.note || "") : ""; $("tMsg").textContent = "";
+  $("tDel").style.display = t ? "" : "none";
+  $("dlgTrip").showModal();
+}
+$("formTrip").addEventListener("submit", function(e){
+  e.preventDefault();
+  var n = $("tName").value.trim(), d1 = $("tD1").value, d2 = $("tD2").value;
+  if(!n){ $("tMsg").textContent = "旅程の名前を入れてください"; return; }
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(d1) || !/^\d{4}-\d{2}-\d{2}$/.test(d2)){ $("tMsg").textContent = "開始日と終了日を入れてください"; return; }
+  if(d2 < d1){ $("tMsg").textContent = "終了日が開始日より前になっています"; return; }
+  var id = editTrip;
+  if(id){ var t = tripById(id); t.n = n; t.d1 = d1; t.d2 = d2; t.note = $("tNote").value.trim(); t.ua = nowIso(); }
+  else{ id = "t" + uid(); user.trips.push({id:id, n:n, d1:d1, d2:d2, note:$("tNote").value.trim(), ca:nowIso(), ua:nowIso()}); }
+  save(); $("dlgTrip").close(); showTrip(id, true);
+});
+$("tDel").onclick = function(){
+  if(!editTrip || !confirm("この旅程を削除しますか？（訪問記録そのものは残ります）")) return;
+  var t = tripById(editTrip); t.del = true; t.ua = nowIso();
+  idbDel("tracks", t.id).catch(function(){}); delete TRK[t.id];
+  save(); $("dlgTrip").close(); closeDetail();
+};
+$("btnTrip").onclick = openTrips;
+$("tripNew").onclick = function(){ $("dlgTrips").close(); openTripForm(null); };
+
+function getTrack(id){
+  if(TRK[id] !== undefined) return Promise.resolve(TRK[id]);
+  return idbGet("tracks", id).then(function(r){ TRK[id] = r || null; return TRK[id]; }).catch(function(){ return null; });
+}
+function hm(sec){ var d = new Date(sec * 1000); return d.getHours() + ":" + pad(d.getMinutes()); }
+function drawTrip(fit){
+  if(!mapOK) return;
+  if(!tripLayer) tripLayer = L.layerGroup().addTo(map);
+  tripLayer.clearLayers();
+  var id = selTrip || tripReturn; if(!id) return;
+  getTrack(id).then(function(tr){
+    if((selTrip || tripReturn) !== id) return;
+    tripLayer.clearLayers();
+    var info = $("tTrkInfo");
+    if(!tr || !tr.pts || !tr.pts.length){ if(info) info.textContent = "軌跡はまだ読み込まれていません。"; return; }
+    var line = tr.pts.map(function(p){ return [p[0], p[1]]; });
+    tripLayer.addLayer(L.polyline(line, {color:"#6A1B9A", weight:3, opacity:0.8, interactive:false}));
+    (tr.stays || []).forEach(function(s){
+      tripLayer.addLayer(L.circleMarker([s[0], s[1]], {radius:5, color:"#6A1B9A", weight:2, fillColor:"#fff", fillOpacity:1, interactive:false}));
+    });
+    if(info) info.textContent = "軌跡：" + tr.pts.length + "点・とどまった場所 " + (tr.stays || []).length + " か所（" +
+      shortDate(ymd(new Date(tr.pts[0][2] * 1000))) + " " + hm(tr.pts[0][2]) + "〜" + shortDate(ymd(new Date(tr.pts[tr.pts.length-1][2] * 1000))) + " " + hm(tr.pts[tr.pts.length-1][2]) + "）";
+    if(fit) map.fitBounds(L.latLngBounds(line), {padding:[30,30]});
+  });
+}
+function showTrip(id, fit){
+  selTrip = id; selId = null; selArea = null; tripReturn = null;
+  $("sheet").classList.add("detail"); openSheet(true);
+  renderTripDetail(); renderMarkers(_vis); renderAreas(); drawTrip(fit);
+}
+function itemLine(it){
+  if(it.v){
+    var p = byId[it.v.pid], labs = Object.keys(it.v.g || {}).map(function(t){
+      var no = it.v.g[t] && it.v.g[t].no;
+      return tLabel(t) + (no ? "（No." + no + "）" : "") + (t === "pf" && !(it.v.ph && it.v.ph.length) ? "（写真待ち）" : "");
+    });
+    return {pid:it.v.pid, c:p ? (KIND_COLOR[p.k] || GROUPS.cu.color) : GROUPS.cu.color,
+      text:(p ? p.n : "（削除された地点）") + (labs.length ? " — " + labs.join("・") : (it.v.note ? " — " + it.v.note : ""))};
+  }
+  if(it.g){ var a = areaById(it.g.aid); return {aid:it.g.aid, c:GROUPS.gm.color, text:(a ? a.n : "エリア") + " — ゴミ袋 " + [it.g.t, it.g.s, it.g.col].filter(Boolean).join("・")}; }
+  var y = it.y, tgt = y.pid ? byId[y.pid] : areaById(y.aid);
+  return {pid:y.pid, aid:y.aid, c:GROUPS.yu.color, text:(tgt ? tgt.n : "") + " — " + [y.ch, y.it].filter(Boolean).join("・")};
+}
+function renderTripDetail(){
+  var t = tripById(selTrip), el = $("detail");
+  if(!t || t.del){ closeDetail(); return; }
+  var items = tripItems(t);
+  var h = '<div class="dhead"><h2>' + esc(t.n) + '</h2><button class="btn sm ghost" type="button" id="dClose" aria-label="閉じる">✕</button></div>';
+  h += '<div class="dmeta">' + esc(fmtDate(t.d1)) + "〜" + esc(fmtDate(t.d2)) + "（" + tripDays(t).length + "日）" + (t.note ? "<br>" + esc(t.note) : "") + '<br><span id="tTrkInfo">軌跡を確認しています…</span></div>';
+  h += '<div class="dlinks"><button class="btn sm" type="button" id="tTrack">軌跡を読み込む</button><button class="btn sm primary" type="button" id="tCand">立ち寄り候補を探す</button>' +
+       '<button class="btn sm" type="button" id="tWork">記録日を旅程の日に</button><button class="btn sm" type="button" id="tEdit">編集</button></div>';
+  h += '<div class="sect">この旅で収集したもの（' + tripCount(items) + '点）</div>';
+  if(!items.length) h += '<p class="help">この期間の記録はまだありません。立ち寄り候補から登録するか、各地点で記録してください。</p>';
+  var lastD = "";
+  items.forEach(function(it, i){
+    if(it.d !== lastD){ h += '<div class="dayh">' + esc(dayLabel(it.d)) + "</div>"; lastD = it.d; }
+    var L2 = itemLine(it);
+    h += '<button type="button" class="titem" data-i="' + i + '" style="--c:' + L2.c + '"><span class="dot"></span><span>' + esc(L2.text) + "</span></button>";
+  });
+  el.innerHTML = h;
+  $("dClose").onclick = closeDetail;
+  $("tTrack").onclick = function(){ $("trackIn").click(); };
+  $("tCand").onclick = function(){ openCandidates(t); };
+  $("tWork").onclick = openWork;
+  $("tEdit").onclick = function(){ openTripForm(t.id); };
+  el.querySelectorAll("[data-i]").forEach(function(b){
+    b.onclick = function(){
+      var L2 = itemLine(items[+b.getAttribute("data-i")]);
+      if(L2.pid && byId[L2.pid]) select(L2.pid, true); else if(L2.aid) selectArea(L2.aid, true);
+    };
+  });
+  drawTrip(false);
+}
+function backHtml(){ return tripReturn && tripById(tripReturn) ? '<button class="btn sm ghost" type="button" id="dBack" style="margin-bottom:6px">← 旅程「' + esc(tripById(tripReturn).n) + '」に戻る</button>' : ""; }
+function bindBack(){ var b = $("dBack"); if(b) b.onclick = function(){ showTrip(tripReturn, false); }; }
+
+/* ---- 軌跡の読み込み（Googleマップのタイムライン JSON・GPX） ---- */
+function parseLL(s){
+  if(s == null) return null;
+  if(typeof s === "object"){
+    if(s.latLng) return parseLL(s.latLng);
+    if(s.LatLng) return parseLL(s.LatLng);
+    if("latitudeE7" in s) return [s.latitudeE7 / 1e7, s.longitudeE7 / 1e7];
+    if("lat" in s) return [+s.lat, +(s.lng != null ? s.lng : s.lon)];
+    return null;
+  }
+  var m = String(s).replace(/^geo:/, "").replace(/°/g, "").split(",");
+  if(m.length < 2) return null;
+  var a = parseFloat(m[0]), b = parseFloat(m[1]);
+  return isFinite(a) && isFinite(b) ? [a, b] : null;
+}
+function tsec(x){
+  if(x == null || x === "") return NaN;
+  if(typeof x === "number") return x > 1e12 ? x / 1000 : x;
+  if(/^\d+$/.test(x)) return +x > 1e12 ? +x / 1000 : +x;
+  return Date.parse(x) / 1000;
+}
+function detectStays(pts){
+  var out = [], i = 0;
+  while(i < pts.length){
+    var j = i;
+    while(j + 1 < pts.length && dist({lat:pts[i][0], lng:pts[i][1]}, {lat:pts[j+1][0], lng:pts[j+1][1]}) < 0.15) j++;
+    if(pts[j][2] - pts[i][2] >= 300){
+      var la = 0, lo = 0;
+      for(var k = i; k <= j; k++){ la += pts[k][0]; lo += pts[k][1]; }
+      out.push([la / (j - i + 1), lo / (j - i + 1), pts[i][2], pts[j][2]]); i = j + 1;
+    }else i++;
+  }
+  return out;
+}
+function thinTrack(pts){
+  var out = [], last = null;
+  pts.forEach(function(p){ if(!last || dist({lat:last[0], lng:last[1]}, {lat:p[0], lng:p[1]}) >= 0.02){ out.push(p); last = p; } });
+  if(out.length > 30000){ var st = Math.ceil(out.length / 30000); out = out.filter(function(_, i){ return i % st === 0; }); }
+  return out;
+}
+function parseTrack(text, d1, d2){
+  var from = new Date(d1 + "T00:00:00").getTime() / 1000, to = new Date(d2 + "T23:59:59").getTime() / 1000;
+  var pts = [], stays = [];
+  function addP(ll, t){ if(ll && isFinite(t) && t >= from && t <= to) pts.push([+ll[0].toFixed(6), +ll[1].toFixed(6), Math.round(t)]); }
+  function addS(ll, t1, t2){ if(ll && isFinite(t1) && isFinite(t2) && t2 >= from && t1 <= to) stays.push([ll[0], ll[1], Math.round(t1), Math.round(t2)]); }
+  var s = String(text).replace(/^\uFEFF/, "").trim();
+  if(s.charAt(0) === "<"){
+    var doc = new DOMParser().parseFromString(s, "application/xml");
+    var nodes = doc.getElementsByTagName("trkpt");
+    if(!nodes.length) nodes = doc.getElementsByTagName("rtept");
+    if(!nodes.length) throw new Error("GPXに位置の記録がありません");
+    for(var i = 0; i < nodes.length; i++){
+      var nd = nodes[i], tm = nd.getElementsByTagName("time")[0];
+      var t = tm ? tsec(tm.textContent.trim()) : from;
+      addP([parseFloat(nd.getAttribute("lat")), parseFloat(nd.getAttribute("lon"))], t);
+    }
+  }else{
+    var d = JSON.parse(s);
+    var segs = Array.isArray(d) ? d : (d.semanticSegments || []);
+    segs.forEach(function(g){
+      var st0 = tsec(g.startTime);
+      (g.timelinePath || []).forEach(function(p){
+        var t = p.time != null ? tsec(p.time) : st0 + 60 * (+p.durationMinutesOffsetFromStartTime || 0);
+        addP(parseLL(p.point), t);
+      });
+      if(g.visit){ var c = g.visit.topCandidate || {}; addS(parseLL(c.placeLocation), st0, tsec(g.endTime)); }
+      if(g.activity){ addP(parseLL(g.activity.start), st0); addP(parseLL(g.activity.end), tsec(g.endTime)); }
+    });
+    (d.rawSignals || []).forEach(function(r){ if(r.position) addP(parseLL(r.position.LatLng || r.position.latLng), tsec(r.position.timestamp)); });
+    (d.locations || []).forEach(function(r){ addP(parseLL(r), tsec(r.timestamp || r.timestampMs)); });
+    (d.timelineObjects || []).forEach(function(o){
+      if(o.placeVisit){ var du = o.placeVisit.duration || {}; addS(parseLL(o.placeVisit.location), tsec(du.startTimestamp || du.startTimestampMs), tsec(du.endTimestamp || du.endTimestampMs)); }
+      if(o.activitySegment){
+        var a = o.activitySegment, du2 = a.duration || {}, ts = tsec(du2.startTimestamp || du2.startTimestampMs);
+        addP(parseLL(a.startLocation), ts); addP(parseLL(a.endLocation), tsec(du2.endTimestamp || du2.endTimestampMs));
+        ((a.waypointPath || {}).waypoints || []).forEach(function(w){ addP(parseLL(w), ts); });
+      }
+    });
+  }
+  // とどまった場所を軌跡の点としても使う（線がつながるように）
+  stays.forEach(function(x){ pts.push([x[0], x[1], x[2]]); });
+  pts.sort(function(a,b){ return a[2] - b[2]; });
+  if(!stays.length) stays = detectStays(pts);
+  stays.sort(function(a,b){ return a[2] - b[2]; });
+  return {pts:thinTrack(pts), stays:stays};
+}
+$("trackIn").onchange = function(){
+  var f = this.files && this.files[0]; this.value = "";
+  var t = selTrip && tripById(selTrip); if(!f || !t) return;
+  toast("軌跡を読み込んでいます…");
+  var fr = new FileReader();
+  fr.onload = function(){
+    var tr;
+    try{ tr = parseTrack(String(fr.result), t.d1, t.d2); }
+    catch(e){ toast("読み込めませんでした：" + e.message); return; }
+    if(!tr.pts.length){ toast("旅程の期間（" + shortDate(t.d1) + "〜" + shortDate(t.d2) + "）の位置記録がファイルにありません"); return; }
+    tr.id = t.id;
+    idbPut("tracks", tr).then(function(){
+      TRK[t.id] = tr; drawTrip(true);
+      toast("軌跡を読み込みました（とどまった場所 " + tr.stays.length + " か所）");
+    }).catch(function(e){ toast("保存できませんでした：" + e.message); });
+  };
+  fr.readAsText(f);
+};
+
+/* ---- 立ち寄り候補 ---- */
+function primaryTypes(p){ return p.k === "me" ? ["stamp"] : p.k === "sa" ? ["hw"] : p.k === "pf" ? ["pf"] : p.k === "cu" ? ["cu"] : []; }
+function findCandidates(tr){
+  var out = [], seen = {};
+  (tr.stays || []).forEach(function(s){
+    var d = ymd(new Date(s[2] * 1000));
+    PLACES.forEach(function(p){
+      if(p.k === "yu") return;
+      if(Math.abs(p.la - s[0]) > 0.01 || Math.abs(p.lo - s[1]) > 0.013) return;
+      var km = dist({lat:s[0], lng:s[1]}, {lat:p.la, lng:p.lo});
+      if(km > (p.k === "sa" ? 0.35 : 0.15)) return;
+      var key = p.id + "|" + d; if(seen[key]) return; seen[key] = 1;
+      if(visitsOf(p.id).some(function(v){ return v.d === d; })) return;
+      out.push({pid:p.id, d:d, t:s[2], km:km, stay:Math.round((s[3] - s[2]) / 60)});
+    });
+  });
+  return out.sort(function(a,b){ return a.t - b.t; });
+}
+function openCandidates(t){
+  getTrack(t.id).then(function(tr){
+    if(!tr || !tr.pts.length){ toast("先に「軌跡を読み込む」で軌跡を入れてください"); return; }
+    candList = findCandidates(tr);
+    var el = $("candList");
+    if(!candList.length) el.innerHTML = '<p class="help">新しい候補は見つかりませんでした（すでに記録済みのものは出しません）。候補にない地点は、地点を開いて記録してください。</p>';
+    else el.innerHTML = candList.map(function(c, i){
+      var p = byId[c.pid], ty = primaryTypes(p).map(tLabel).join("・") || "立ち寄りのみ";
+      return '<label class="cand"><input type="checkbox" data-ci="' + i + '" checked><span><b>' + esc(p.n) + "</b><small>" + esc(dayLabel(c.d)) + " " + hm(c.t) +
+        "頃・約" + c.stay + "分滞在・" + Math.round(c.km * 1000) + "m ／ 記録：" + esc(ty) + "</small></span></label>";
+    }).join("");
+    $("dlgCand").showModal();
+  });
+}
+$("candOk").onclick = function(){
+  var n = 0;
+  $("candList").querySelectorAll("input[data-ci]").forEach(function(cb){
+    if(!cb.checked) return;
+    var c = candList[+cb.getAttribute("data-ci")], p = byId[c.pid]; if(!p) return;
+    var g = {}; primaryTypes(p).forEach(function(t){ g[t] = {}; });
+    user.visits.push({id:"v" + uid(), pid:p.id, d:c.d, g:g, note:Object.keys(g).length ? "旅程から登録" : "立ち寄り（旅程から登録）", ca:nowIso(), ua:nowIso()});
+    n++;
+  });
+  save(); rebuildGot(); $("dlgCand").close(); renderAll();
+  toast(n + " か所を登録しました");
+};
+
+/* ================= 写真と軌跡の書き出し（zip） ================= */
+var CRC_T = null;
+function crc32(u8){
+  if(!CRC_T){ CRC_T = new Uint32Array(256); for(var n = 0; n < 256; n++){ var c = n; for(var k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; CRC_T[n] = c >>> 0; } }
+  var crc = 0xFFFFFFFF;
+  for(var i = 0; i < u8.length; i++) crc = CRC_T[(crc ^ u8[i]) & 0xFF] ^ (crc >>> 8);
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+function strU8(s){ return new TextEncoder().encode(s); }
+function toU8(x){ return ArrayBuffer.isView(x) ? Promise.resolve(x) : readAB(x).then(function(ab){ return new Uint8Array(ab); }); }
+function zipBuild(entries){
+  var parts = [], cd = [], off = 0;
+  return entries.reduce(function(pr, e){
+    return pr.then(function(){ return toU8(e.data).then(function(bytes){
+      var name = strU8(e.name), crc = crc32(bytes), size = bytes.length;
+      var h = new DataView(new ArrayBuffer(30));
+      h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint16(6, 0x0800, true); h.setUint16(12, 0x21, true);
+      h.setUint32(14, crc, true); h.setUint32(18, size, true); h.setUint32(22, size, true); h.setUint16(26, name.length, true);
+      parts.push(new Uint8Array(h.buffer), name, (typeof Blob !== "undefined" && e.data instanceof Blob) ? e.data : bytes);
+      var c = new DataView(new ArrayBuffer(46));
+      c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true); c.setUint16(8, 0x0800, true); c.setUint16(14, 0x21, true);
+      c.setUint32(16, crc, true); c.setUint32(20, size, true); c.setUint32(24, size, true); c.setUint16(28, name.length, true); c.setUint32(42, off, true);
+      cd.push(new Uint8Array(c.buffer), name);
+      off += 30 + name.length + size;
+    }); });
+  }, Promise.resolve()).then(function(){
+    var cdSize = cd.reduce(function(s, x){ return s + x.length; }, 0);
+    var e = new DataView(new ArrayBuffer(22));
+    e.setUint32(0, 0x06054b50, true); e.setUint16(8, entries.length, true); e.setUint16(10, entries.length, true);
+    e.setUint32(12, cdSize, true); e.setUint32(16, off, true);
+    return new Blob(parts.concat(cd, [new Uint8Array(e.buffer)]), {type:"application/zip"});
+  });
+}
+function zipRead(file){
+  var tail = Math.min(file.size, 65557);
+  return readAB(file.slice(file.size - tail)).then(function(ab){
+    var dv = new DataView(ab), i;
+    for(i = ab.byteLength - 22; i >= 0; i--) if(dv.getUint32(i, true) === 0x06054b50) break;
+    if(i < 0) throw new Error("zipファイルではありません");
+    var n = dv.getUint16(i + 10, true), cdSize = dv.getUint32(i + 12, true), cdOff = dv.getUint32(i + 16, true);
+    return readAB(file.slice(cdOff, cdOff + cdSize)).then(function(cab){
+      var c = new DataView(cab), p = 0, list = [], dec = new TextDecoder();
+      for(var k = 0; k < n; k++){
+        if(c.getUint32(p, true) !== 0x02014b50) throw new Error("zipの形式が違います");
+        var nl = c.getUint16(p + 28, true), el = c.getUint16(p + 30, true), cl = c.getUint16(p + 32, true);
+        list.push({name:dec.decode(new Uint8Array(cab, p + 46, nl)), method:c.getUint16(p + 10, true), size:c.getUint32(p + 20, true), lho:c.getUint32(p + 42, true)});
+        p += 46 + nl + el + cl;
+      }
+      return Promise.all(list.map(function(e){
+        return readAB(file.slice(e.lho, e.lho + 30)).then(function(hab){
+          var h = new DataView(hab), start = e.lho + 30 + h.getUint16(26, true) + h.getUint16(28, true);
+          if(e.method !== 0) throw new Error("圧縮されたzipには対応していません（アプリで書き出したファイルを使ってください）");
+          return {name:e.name, blob:file.slice(start, start + e.size)};
+        });
+      }));
+    });
+  });
+}
+function mediaMsg(s, err){ var m = $("mediaMsg"); m.textContent = s; m.className = "msg" + (err ? " err" : ""); }
+function downloadBlob(blob, name){
+  var a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click();
+  setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+}
+function buildMediaZip(){
+  return Promise.all([idbAll("photos"), idbAll("tracks")]).then(function(r){
+    var ph = r[0] || [], tr = r[1] || [];
+    var man = {app:"collectmap", kind:"media", version:1, exported:nowIso(),
+      photos:ph.map(function(p){ return {id:p.id, pid:p.pid, vid:p.vid, ca:p.ca, file:"photos/" + p.id + ".jpg"}; }),
+      tracks:tr.map(function(t){ return {id:t.id, file:"tracks/" + t.id + ".json"}; })};
+    var entries = [{name:"manifest.json", data:strU8(JSON.stringify(man))}];
+    ph.forEach(function(p){ entries.push({name:"photos/" + p.id + ".jpg", data:p.blob}); });
+    tr.forEach(function(t){ entries.push({name:"tracks/" + t.id + ".json", data:strU8(JSON.stringify(t))}); });
+    return zipBuild(entries).then(function(blob){ return {blob:blob, np:ph.length, nt:tr.length}; });
+  });
+}
+function importMediaZip(file){
+  return zipRead(file).then(function(ents){
+    var by = {}; ents.forEach(function(e){ by[e.name] = e; });
+    if(!by["manifest.json"]) throw new Error("収集マップで書き出したファイルではありません");
+    return readText(by["manifest.json"].blob).then(function(t){
+      var man = JSON.parse(t), nP = 0, nT = 0;
+      var jobs = (man.photos || []).map(function(p){
+        var e = by[p.file]; if(!e) return null;
+        return idbGet("photos", p.id).then(function(ex){
+          if(ex) return; nP++;
+          return idbPut("photos", {id:p.id, pid:p.pid, vid:p.vid, ca:p.ca, blob:new Blob([e.blob], {type:"image/jpeg"})});
+        });
+      }).concat((man.tracks || []).map(function(x){
+        var e = by[x.file]; if(!e) return null;
+        return readText(e.blob).then(function(s){ var tr = JSON.parse(s); nT++; TRK[tr.id] = tr; return idbPut("tracks", tr); });
+      }));
+      return Promise.all(jobs).then(function(){ return {np:nP, nt:nT}; });
+    });
+  });
+}
+$("btnMediaExport").onclick = function(){
+  mediaMsg("書き出しの準備をしています…");
+  buildMediaZip().then(function(r){
+    if(!r.np && !r.nt){ mediaMsg("書き出す写真・軌跡がまだありません", true); return; }
+    downloadBlob(r.blob, "collectmap-media-" + today() + ".zip");
+    mediaMsg("写真 " + r.np + " 枚・軌跡 " + r.nt + " 件を書き出しました");
+  }).catch(function(e){ mediaMsg("書き出せませんでした：" + e.message, true); });
+};
+$("mediaIn").onchange = function(){
+  var f = this.files && this.files[0]; this.value = ""; if(!f) return;
+  mediaMsg("読み込んでいます…");
+  importMediaZip(f).then(function(r){ mediaMsg("写真 " + r.np + " 枚・軌跡 " + r.nt + " 件を読み込みました"); renderAll(); })
+    .catch(function(e){ mediaMsg("読み込めませんでした：" + e.message, true); });
+};
+
 /* ================= 配線 ================= */
 document.addEventListener("click", function(e){
   var t = e.target;
@@ -1341,5 +1927,8 @@ window.__cm = {user:function(){ return user; }, places:function(){ return PLACES
   map:function(){ return map; }, pick:function(){ return pick; }, bidx:function(){ return BIDX; }, bnd:function(){ return BND; },
   loadPref:loadPref, togglePickFeature:togglePickFeature, pickAction:pickAction, onMapClickPick:onMapClickPick,
   areaLayer:function(){ return areaLayer; }, exportJson:exportJson, selectArea:selectArea,
-  openAddMenu:openAddMenu, openNames:openNames, refreshNames:refreshNames, fire:function(ev, ll){ map.fire(ev, {latlng:L.latLng(ll[0], ll[1])}); }};
+  openAddMenu:openAddMenu, openNames:openNames, refreshNames:refreshNames,
+  parseTrack:parseTrack, findCandidates:findCandidates, showTrip:showTrip, openCandidates:openCandidates, getTrack:getTrack,
+  buildMediaZip:buildMediaZip, importMediaZip:importMediaZip, zipRead:zipRead, idbAll:idbAll, idbDel:idbDel, curDate:curDate,
+  pend:function(){ return pendPf; }, trk:function(){ return TRK; }, openVisit:openVisit, fire:function(ev, ll){ map.fire(ev, {latlng:L.latLng(ll[0], ll[1])}); }};
 })();
