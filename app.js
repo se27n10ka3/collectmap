@@ -1336,11 +1336,12 @@ function idb(){
   if(IDBP) return IDBP;
   IDBP = new Promise(function(res, rej){
     if(!window.indexedDB){ rej(new Error("この環境では写真を保存できません")); return; }
-    var r = indexedDB.open("collectmap", 1);
+    var r = indexedDB.open("collectmap", 2);
     r.onupgradeneeded = function(){
       var db = r.result;
       if(!db.objectStoreNames.contains("photos")) db.createObjectStore("photos", {keyPath:"id"});
       if(!db.objectStoreNames.contains("tracks")) db.createObjectStore("tracks", {keyPath:"id"});
+      if(!db.objectStoreNames.contains("days")) db.createObjectStore("days", {keyPath:"id"});
     };
     r.onsuccess = function(){ res(r.result); };
     r.onerror = function(){ rej(r.error || new Error("保存領域を開けません")); };
@@ -1362,6 +1363,7 @@ function idbPut(s, o){ return idbReq(s, "readwrite", function(st){ return st.put
 function idbGet(s, id){ return idbReq(s, "readonly", function(st){ return st.get(id); }); }
 function idbDel(s, id){ return idbReq(s, "readwrite", function(st){ return st.delete(id); }); }
 function idbAll(s){ return idbReq(s, "readonly", function(st){ return st.getAll(); }); }
+function idbClear(s){ return idbReq(s, "readwrite", function(st){ return st.clear(); }); }
 function readAB(b){ return new Promise(function(res, rej){ var fr = new FileReader(); fr.onload = function(){ res(fr.result); }; fr.onerror = function(){ rej(fr.error); }; fr.readAsArrayBuffer(b); }); }
 function readText(b){ return new Promise(function(res, rej){ var fr = new FileReader(); fr.onload = function(){ res(String(fr.result)); }; fr.onerror = function(){ rej(fr.error); }; fr.readAsText(b); }); }
 
@@ -1536,7 +1538,7 @@ $("formTrip").addEventListener("submit", function(e){
   if(!/^\d{4}-\d{2}-\d{2}$/.test(d1) || !/^\d{4}-\d{2}-\d{2}$/.test(d2)){ $("tMsg").textContent = "開始日と終了日を入れてください"; return; }
   if(d2 < d1){ $("tMsg").textContent = "終了日が開始日より前になっています"; return; }
   var id = editTrip;
-  if(id){ var t = tripById(id); t.n = n; t.d1 = d1; t.d2 = d2; t.note = $("tNote").value.trim(); t.ua = nowIso(); }
+  if(id){ var t = tripById(id); t.n = n; t.d1 = d1; t.d2 = d2; t.note = $("tNote").value.trim(); t.ua = nowIso(); delete TRK[id]; }
   else{ id = "t" + uid(); user.trips.push({id:id, n:n, d1:d1, d2:d2, note:$("tNote").value.trim(), ca:nowIso(), ua:nowIso()}); }
   save(); $("dlgTrip").close(); showTrip(id, true);
 });
@@ -1551,7 +1553,15 @@ $("tripNew").onclick = function(){ $("dlgTrips").close(); openTripForm(null); };
 
 function getTrack(id){
   if(TRK[id] !== undefined) return Promise.resolve(TRK[id]);
-  return idbGet("tracks", id).then(function(r){ TRK[id] = r || null; return TRK[id]; }).catch(function(){ return null; });
+  return idbGet("tracks", id).catch(function(){ return null; }).then(function(own){
+    if(own && own.pts && own.pts.length){ own.src = "file"; return own; }
+    var t = tripById(id); if(!t) return null;
+    return Promise.all(tripDays(t).map(function(d){ return idbGet("days", d).catch(function(){ return null; }); })).then(function(ds){
+      var pts = [], stays = [];
+      ds.forEach(function(x){ if(x){ pts = pts.concat(x.pts || []); stays = stays.concat(x.stays || []); } });
+      return pts.length ? {id:id, pts:pts, stays:stays, src:"timeline"} : null;
+    });
+  }).then(function(r){ TRK[id] = r || null; return TRK[id]; });
 }
 function hm(sec){ var d = new Date(sec * 1000); return d.getHours() + ":" + pad(d.getMinutes()); }
 function drawTrip(fit){
@@ -1563,13 +1573,13 @@ function drawTrip(fit){
     if((selTrip || tripReturn) !== id) return;
     tripLayer.clearLayers();
     var info = $("tTrkInfo");
-    if(!tr || !tr.pts || !tr.pts.length){ if(info) info.textContent = "軌跡はまだ読み込まれていません。"; return; }
+    if(!tr || !tr.pts || !tr.pts.length){ if(info) info.textContent = "この期間の軌跡はまだありません。メニュー「≡」のタイムラインから取り込むと自動で表示されます。"; return; }
     var line = tr.pts.map(function(p){ return [p[0], p[1]]; });
     tripLayer.addLayer(L.polyline(line, {color:"#6A1B9A", weight:3, opacity:0.8, interactive:false}));
     (tr.stays || []).forEach(function(s){
       tripLayer.addLayer(L.circleMarker([s[0], s[1]], {radius:5, color:"#6A1B9A", weight:2, fillColor:"#fff", fillOpacity:1, interactive:false}));
     });
-    if(info) info.textContent = "軌跡：" + tr.pts.length + "点・とどまった場所 " + (tr.stays || []).length + " か所（" +
+    if(info) info.textContent = (tr.src === "timeline" ? "軌跡（タイムラインから）：" : "軌跡：") + tr.pts.length + "点・とどまった場所 " + (tr.stays || []).length + " か所（" +
       shortDate(ymd(new Date(tr.pts[0][2] * 1000))) + " " + hm(tr.pts[0][2]) + "〜" + shortDate(ymd(new Date(tr.pts[tr.pts.length-1][2] * 1000))) + " " + hm(tr.pts[tr.pts.length-1][2]) + "）";
     if(fit) map.fitBounds(L.latLngBounds(line), {padding:[30,30]});
   });
@@ -1714,6 +1724,10 @@ function parseTrack(text, d1, d2){
 $("trackIn").onchange = function(){
   var f = this.files && this.files[0]; this.value = "";
   var t = selTrip && tripById(selTrip); if(!f || !t) return;
+  if(f.size > 30 * 1024 * 1024){
+    toast("大きなファイルは、メニュー「≡」のタイムラインから取り込んでください");
+    $("btnMenu").onclick(); return;
+  }
   toast("軌跡を読み込んでいます…");
   var fr = new FileReader();
   fr.onload = function(){
@@ -1886,6 +1900,147 @@ $("mediaIn").onchange = function(){
     .catch(function(e){ mediaMsg("読み込めませんでした：" + e.message, true); });
 };
 
+
+/* ================= タイムラインの取り込み（大きなファイルを少しずつ） ================= */
+function TLScanner(onItem){
+  this.depth = 0; this.inStr = false; this.esc = false; this.started = false; this.topArray = false;
+  this.keyBuf = null; this.lastStr = ""; this.key = ""; this.arrKey = null;
+  this.cap = null; this.capDepth = -1; this.capKey = null; this.onItem = onItem;
+}
+var TL_KEYS = {semanticSegments:1, rawSignals:1, locations:1, timelineObjects:1};
+TLScanner.prototype.feed = function(s){
+  var capStart = this.cap !== null ? 0 : -1;
+  for(var i = 0, n = s.length; i < n; i++){
+    var c = s.charCodeAt(i);
+    if(this.inStr){
+      if(this.esc) this.esc = false;
+      else if(c === 92) this.esc = true;
+      else if(c === 34){ this.inStr = false; if(this.keyBuf !== null){ this.lastStr = this.keyBuf; this.keyBuf = null; } }
+      else if(this.keyBuf !== null && this.keyBuf.length < 40) this.keyBuf += s[i];
+      continue;
+    }
+    if(c === 34){ this.inStr = true; if(this.depth === 1 && !this.topArray && this.cap === null) this.keyBuf = ""; continue; }
+    if(c === 58){ if(this.depth === 1 && !this.topArray) this.key = this.lastStr; continue; }
+    if(c === 123 || c === 91){
+      if(!this.started){ this.started = true; this.topArray = c === 91; this.depth = 1; continue; }
+      this.depth++;
+      if(this.cap === null){
+        if(c === 91 && !this.topArray && this.depth === 2) this.arrKey = TL_KEYS[this.key] ? this.key : null;
+        else if(c === 123 && ((this.topArray && this.depth === 2) || (!this.topArray && this.depth === 3 && this.arrKey))){
+          this.cap = ""; capStart = i; this.capDepth = this.depth; this.capKey = this.topArray ? "semanticSegments" : this.arrKey;
+        }
+      }
+      continue;
+    }
+    if(c === 125 || c === 93){
+      if(this.cap !== null && c === 125 && this.depth === this.capDepth){
+        var text = this.cap + s.slice(capStart, i + 1);
+        this.cap = null; capStart = -1;
+        this.onItem(this.capKey, text);
+      }
+      if(c === 93 && this.depth === 2 && !this.topArray) this.arrKey = null;
+      this.depth--;
+    }
+  }
+  if(this.cap !== null) this.cap += s.slice(capStart);
+};
+/* 記録1件を点と滞在に分ける（Android・iPhone・旧Takeoutの形式） */
+function handleTL(key, g, addP, addS){
+  if(key === "semanticSegments"){
+    var st0 = tsec(g.startTime);
+    (g.timelinePath || []).forEach(function(p){
+      addP(parseLL(p.point), p.time != null ? tsec(p.time) : st0 + 60 * (+p.durationMinutesOffsetFromStartTime || 0));
+    });
+    if(g.visit){ var c = g.visit.topCandidate || {}; addS(parseLL(c.placeLocation), st0, tsec(g.endTime)); }
+    if(g.activity){ addP(parseLL(g.activity.start), st0); addP(parseLL(g.activity.end), tsec(g.endTime)); }
+  }else if(key === "rawSignals"){
+    if(g.position) addP(parseLL(g.position.LatLng || g.position.latLng), tsec(g.position.timestamp));
+  }else if(key === "locations"){
+    addP(parseLL(g), tsec(g.timestamp || g.timestampMs));
+  }else if(key === "timelineObjects"){
+    if(g.placeVisit){ var du = g.placeVisit.duration || {}; addS(parseLL(g.placeVisit.location), tsec(du.startTimestamp || du.startTimestampMs), tsec(du.endTimestamp || du.endTimestampMs)); }
+    if(g.activitySegment){
+      var a = g.activitySegment, du2 = a.duration || {}, ts = tsec(du2.startTimestamp || du2.startTimestampMs);
+      addP(parseLL(a.startLocation), ts); addP(parseLL(a.endLocation), tsec(du2.endTimestamp || du2.endTimestampMs));
+      ((a.waypointPath || {}).waypoints || []).forEach(function(w){ addP(parseLL(w), ts); });
+    }
+  }
+}
+var TL_META_KEY = "collectmap.timeline";
+function tlMeta(){ try{ return JSON.parse(localStorage.getItem(TL_META_KEY) || "null"); }catch(e){ return null; } }
+function showTlStat(){
+  var m = tlMeta(), el = $("tlStat"); if(!el) return;
+  el.textContent = m && m.days ? "取り込み済み：" + fmtDate(m.first) + "〜" + fmtDate(m.last) + "（" + m.days + "日分・" + m.pts + "点、" + fmtDate(m.at.slice(0,10)) + "に取り込み）" : "まだ取り込んでいません。";
+}
+function importTimeline(file, fromDate, onProgress){
+  var from = new Date(fromDate + "T00:00:00").getTime() / 1000;
+  var buckets = {}, flushed = {}, nDays = 0, nPts = 0, first = null, last = null, bad = 0;
+  function bucket(t){ var d = ymd(new Date(t * 1000)); return buckets[d] || (buckets[d] = {pts:[], stays:[]}); }
+  function addP(ll, t){ if(ll && isFinite(t) && t >= from) bucket(t).pts.push([+ll[0].toFixed(6), +ll[1].toFixed(6), Math.round(t)]); }
+  function addS(ll, t1, t2){ if(ll && isFinite(t1) && isFinite(t2) && t1 >= from){ bucket(t1).stays.push([ll[0], ll[1], Math.round(t1), Math.round(t2)]); bucket(t1).pts.push([ll[0], ll[1], Math.round(t1)]); } }
+  var sc = new TLScanner(function(key, text){
+    var g; try{ g = JSON.parse(text); }catch(e){ bad++; return; }
+    handleTL(key, g, addP, addS);
+  });
+  function flush(keepRecent){
+    var ds = Object.keys(buckets).sort();
+    if(keepRecent) ds = ds.slice(0, Math.max(0, ds.length - 2));
+    return ds.reduce(function(pr, d){
+      return pr.then(function(){
+        var b = buckets[d]; delete buckets[d];
+        var prev = flushed[d] ? idbGet("days", d) : Promise.resolve(null);
+        return prev.then(function(old){
+          var pts = (old ? old.pts : []).concat(b.pts), stays = (old ? old.stays : []).concat(b.stays);
+          pts.sort(function(a,b2){ return a[2] - b2[2]; }); stays.sort(function(a,b2){ return a[2] - b2[2]; });
+          if(!stays.length) stays = detectStays(pts);
+          var thin = thinTrack(pts);
+          if(!flushed[d]){ nDays++; } else if(old) nPts -= old.pts.length;
+          flushed[d] = 1; nPts += thin.length;
+          if(!first || d < first) first = d; if(!last || d > last) last = d;
+          return idbPut("days", {id:d, pts:thin, stays:stays});
+        });
+      });
+    }, Promise.resolve());
+  }
+  var CH = 4 * 1024 * 1024, pos = 0, dec = new TextDecoder("utf-8");
+  function step(){
+    if(pos >= file.size){ sc.feed(dec.decode()); return flush(false); }
+    var part = file.slice(pos, pos + CH); pos += CH;
+    return readAB(part).then(function(ab){
+      sc.feed(dec.decode(new Uint8Array(ab), {stream:true}));
+      var lastDay = Object.keys(buckets).sort().pop();
+      if(onProgress) onProgress(Math.min(1, pos / file.size), lastDay);
+      var more = Object.keys(buckets).length > 40 ? flush(true) : Promise.resolve();
+      return more.then(function(){ return new Promise(function(r){ setTimeout(r, 0); }); }).then(step);
+    });
+  }
+  return step().then(function(){
+    if(!sc.started) throw new Error("タイムラインのファイルではないようです");
+    var m = tlMeta() || {};
+    var meta = {first: m.first && m.first < first ? m.first : first, last: m.last && m.last > last ? m.last : last,
+      days: nDays, pts: nPts, at: nowIso(), from: fromDate, bad: bad};
+    if(first) localStorage.setItem(TL_META_KEY, JSON.stringify(meta));
+    TRK = {};
+    return meta;
+  });
+}
+$("tlIn").onchange = function(){
+  var f = this.files && this.files[0]; this.value = ""; if(!f) return;
+  var fromDate = $("tlFrom").value || "2022-01-01", msg = $("tlMsg");
+  msg.className = "msg"; msg.textContent = "取り込みを始めます…（" + Math.round(f.size / 1048576) + "MB）";
+  importTimeline(f, fromDate, function(r, d){
+    msg.textContent = "取り込み中… " + Math.round(r * 100) + "%" + (d ? "（" + d.slice(0, 7).replace("-", "年") + "月まで）" : "");
+  }).then(function(m){
+    msg.textContent = m.days ? "取り込みました：" + m.days + "日分（" + m.pts + "点）" : fromDate.replace(/-/g, "/") + " 以降の記録は見つかりませんでした";
+    showTlStat();
+    if(selTrip || tripReturn) drawTrip(false);
+  }).catch(function(e){ msg.className = "msg err"; msg.textContent = "取り込めませんでした：" + e.message; });
+};
+$("tlClear").onclick = function(){
+  if(!confirm("取り込んだタイムラインの記録を消しますか？（旅程や収集記録は消えません）")) return;
+  idbClear("days").then(function(){ localStorage.removeItem(TL_META_KEY); TRK = {}; showTlStat(); $("tlMsg").textContent = "消しました"; if(selTrip) drawTrip(false); })
+    .catch(function(e){ $("tlMsg").textContent = "消せませんでした：" + e.message; });
+};
 /* ================= 配線 ================= */
 document.addEventListener("click", function(e){
   var t = e.target;
@@ -1893,7 +2048,7 @@ document.addEventListener("click", function(e){
     var d = t.closest("dialog"); if(d) d.close();
   }
 });
-$("btnMenu").onclick = function(){ $("ioOut").style.display = "none"; ioMsg("", false); $("dlgMenu").showModal(); };
+$("btnMenu").onclick = function(){ $("ioOut").style.display = "none"; ioMsg("", false); showTlStat(); $("dlgMenu").showModal(); };
 $("btnProg").onclick = openProg;
 $("btnLoc").onclick = toggleLocate;
 $("btnFit").onclick = function(){ fitPlaces(_vis); };
@@ -1930,5 +2085,5 @@ window.__cm = {user:function(){ return user; }, places:function(){ return PLACES
   openAddMenu:openAddMenu, openNames:openNames, refreshNames:refreshNames,
   parseTrack:parseTrack, findCandidates:findCandidates, showTrip:showTrip, openCandidates:openCandidates, getTrack:getTrack,
   buildMediaZip:buildMediaZip, importMediaZip:importMediaZip, zipRead:zipRead, idbAll:idbAll, idbDel:idbDel, curDate:curDate,
-  pend:function(){ return pendPf; }, trk:function(){ return TRK; }, openVisit:openVisit, fire:function(ev, ll){ map.fire(ev, {latlng:L.latLng(ll[0], ll[1])}); }};
+  pend:function(){ return pendPf; }, trk:function(){ return TRK; }, openVisit:openVisit, importTimeline:importTimeline, fire:function(ev, ll){ map.fire(ev, {latlng:L.latLng(ll[0], ll[1])}); }};
 })();
