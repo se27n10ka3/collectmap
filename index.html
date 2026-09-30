@@ -292,6 +292,16 @@ label.l{display:block;font-size:12px;color:var(--ink-soft);margin:0 0 5px}
     <div class="f"><label class="l" for="ioIn">または貼り付け</label><textarea id="ioIn"></textarea></div>
     <button class="btn primary" id="btnImport" type="button">読み込む</button>
     <div class="msg" id="ioMsg"></div>
+    <div class="sect" style="margin-top:22px">タイムライン（移動の記録）</div>
+    <p class="help">Googleマップのタイムラインから書き出した Timeline.json を取り込むと、旅程に軌跡と立ち寄り候補が自動で出るようになります。何年分の大きなファイルでも少しずつ読むので大丈夫です。取り込むのは指定した日以降の分だけで、処理はこの端末の中だけで行います。取り込み中は画面を消さずにお待ちください。</p>
+    <div class="f"><label class="l" for="tlFrom">この日以降を取り込む</label><input type="date" id="tlFrom" value="2022-01-01"></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <label class="btn primary" for="tlIn" style="cursor:pointer">Timeline.json を選んで取り込む</label>
+      <input type="file" id="tlIn" accept=".json,application/json" style="display:none">
+      <button class="btn danger" id="tlClear" type="button">取り込んだ記録を消す</button>
+    </div>
+    <div class="msg" id="tlMsg"></div>
+    <p class="help" id="tlStat"></p>
     <div class="sect" style="margin-top:22px">写真と軌跡</div>
     <p class="help">写真と旅程の軌跡は容量が大きいので、上のバックアップとは別のファイル（zip）になります。</p>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
