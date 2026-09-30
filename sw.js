@@ -1,12 +1,15 @@
 /* 収集マップ Service Worker */
-var VER = "cm-shell-5.0.0";
+var VER = "cm-shell-5.1.0";
 var TILES = "cm-tiles-1";
 var TILE_MAX = 2000;
 var SHELL = ["./", "index.html", "app.js", "data.json", "b/index.json", "manifest.webmanifest",
              "vendor/leaflet.js", "vendor/leaflet.css", "icon-192.png", "icon-512.png"];
 
 self.addEventListener("install", function(e){
-  e.waitUntil(caches.open(VER).then(function(c){ return c.addAll(SHELL); }).then(function(){ return self.skipWaiting(); }));
+  // 途中の古いファイルを掴まないよう、配信元に取り直して保存する
+  e.waitUntil(caches.open(VER).then(function(c){
+    return c.addAll(SHELL.map(function(u){ return new Request(u, {cache:"reload"}); }));
+  }).then(function(){ return self.skipWaiting(); }));
 });
 self.addEventListener("activate", function(e){
   e.waitUntil(caches.keys().then(function(keys){
@@ -51,7 +54,8 @@ self.addEventListener("fetch", function(e){
   if(url.origin === self.location.origin){
     e.respondWith(
       Promise.race([
-        fetch(req).then(function(res){
+        // 通信できるときは毎回、配信元に新しい版がないか確かめる
+        (req.mode === "navigate" ? fetch(req) : fetch(req.url, {cache:"no-cache", credentials:"same-origin"})).then(function(res){
           if(res && res.ok){ var cp = res.clone(); caches.open(VER).then(function(c){ c.put(req, cp); }); }
           return res;
         }),
