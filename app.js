@@ -7,15 +7,19 @@ var GROUPS = {
   hw:{label:"ハイウェイスタンプ", color:"#00796B"},
   pf:{label:"ポケふた",         color:"#D81B60"},
   rt:{label:"国道ステッカー",   color:"#455A64"},
+  mh:{label:"マンホールカード", color:"#7A3E9D"},
+  et:{label:"エキタグ",         color:"#00ACC1"},
+  sp:{label:"スタンプ",         color:"#827717"},
   cu:{label:"その他",           color:"#8A8F94"},
   yu:{label:"ゆるキャラ",       color:"#F57C00"},
   gm:{label:"ゴミ袋",           color:"#8D6E63"}
 };
-var GROUP_ORDER = ["me","hw","pf","rt","cu"];
-var KIND_COLOR = {me:"#0B5394", sa:"#00796B", pf:"#D81B60", sh:"#455A64", cu:"#8A8F94", yu:"#F57C00"};
+var GROUP_ORDER = ["me","hw","pf","rt","mh","et","sp","cu"];
+var KIND_COLOR = {me:"#0B5394", sa:"#00796B", pf:"#D81B60", sh:"#455A64", mh:"#7A3E9D", et:"#00ACC1", sp:"#827717", cu:"#8A8F94", yu:"#F57C00"};
+var MCI = {};   // マンホールカード：種別ID → {n:名前, s:弾, st:配布状況, d:配布開始日}
 var ME_TYPES = ["stamp","kippu","card","shitei"];
-var TYPE_LABEL = {stamp:"スタンプ", kippu:"きっぷ", card:"カード", shitei:"指定券", hw:"ハイウェイスタンプ", pf:"ポケふた", cu:"記念", yu:"ゆるキャラグッズ"};
-var TYPE_SHORT = {stamp:"ス", kippu:"き", card:"カ", shitei:"指", hw:"ハ", pf:"ポ", cu:"記", yu:"ゆ"};
+var TYPE_LABEL = {stamp:"スタンプ", kippu:"きっぷ", card:"カード", shitei:"指定券", hw:"ハイウェイスタンプ", pf:"ポケふた", cu:"記念", yu:"ゆるキャラグッズ", et:"エキタグ", sp:"スタンプ"};
+var TYPE_SHORT = {stamp:"ス", kippu:"き", card:"カ", shitei:"指", hw:"ハ", pf:"ポ", cu:"記", yu:"ゆ", et:"エ", sp:"印"};
 var HAS_NO = {kippu:true};           // 番号を控える収集物
 var PREF_ORDER = ["北海道","青森県","岩手県","宮城県","秋田県","山形県","福島県","茨城県","栃木県","群馬県","埼玉県","千葉県","東京都","神奈川県",
   "新潟県","富山県","石川県","福井県","山梨県","長野県","岐阜県","静岡県","愛知県","三重県","滋賀県","京都府","大阪府","兵庫県","奈良県","和歌山県",
@@ -35,25 +39,35 @@ var RALLY_NOTE = {
 };
 
 function grp(t){
+  if(t.indexOf("mc_") === 0) return "mh";
   if(ME_TYPES.indexOf(t) >= 0) return "me";
   if(t === "hw") return "hw";
   if(t === "pf") return "pf";
   if(/^r\d+$/.test(t)) return "rt";
   if(t === "yu") return "yu";
+  if(t === "et") return "et";
+  if(t === "sp") return "sp";
   return "cu";
 }
-function tLabel(t){ return /^r\d+$/.test(t) ? "国道" + t.slice(1) + "号ステッカー" : (TYPE_LABEL[t] || t); }
-function tShort(t){ return /^r\d+$/.test(t) ? t.slice(1) : (TYPE_SHORT[t] || "?"); }
+function tLabel(t){
+  if(t.indexOf("mc_") === 0){
+    var m = MCI[t] || {};
+    var extra = [m.s, m.st && m.st !== "配布中" ? m.st : ""].filter(Boolean).join("・");
+    return "マンホールカード " + (m.n || t.slice(3)) + (extra ? "（" + extra + "）" : "");
+  }
+  return /^r\d+$/.test(t) ? "国道" + t.slice(1) + "号ステッカー" : (TYPE_LABEL[t] || t);
+}
+function tShort(t){ return t.indexOf("mc_") === 0 ? "マ" : /^r\d+$/.test(t) ? t.slice(1) : (TYPE_SHORT[t] || "?"); }
 
 var KEY = "collectmap.v2";
 
 /* ================= 状態 ================= */
 var MASTER = [], PLACES = [], byId = {};
-var user = {version:2, visits:[], custom:[], areas:[], gomi:[], yuru:[], trips:[]};
+var user = {version:2, visits:[], custom:[], areas:[], gomi:[], yuru:[], trips:[], stamps:[], rallies:[], tkchk:[]};
 var got = {};   // got[pid][type] = {n, last, nos:[]}
 var gotR = {};
 var pendPf = {};  // ポケふた：訪問済みで写真がないもの  // 国道ステッカーは番号単位 gotR["r23"] = {n, last, where:[pid]}
-var filt = {g:{me:true,hw:true,pf:true,rt:true,cu:true,yu:true,gm:true}, meMode:"all", undone:false, q:""};
+var filt = {g:{me:true,hw:true,pf:true,rt:true,mh:true,et:true,sp:true,cu:true,yu:true,gm:true}, meMode:"all", status:"all", pref:"", q:""};
 var me = null, watchId = null, manual = false, lastFix = null, lastFixT = 0;
 var map = null, mapOK = false, markers = {}, meMarker = null;
 var selId = null, listLimit = 100;
@@ -87,7 +101,7 @@ function load(){
     var raw = localStorage.getItem(KEY);
     if(raw){
       var d = JSON.parse(raw);
-      if(d && Array.isArray(d.visits)) user = {version:2, visits:d.visits, custom:d.custom || [], areas:d.areas || [], gomi:d.gomi || [], yuru:d.yuru || [], trips:d.trips || []};
+      if(d && Array.isArray(d.visits)) user = {version:2, visits:d.visits, custom:d.custom || [], areas:d.areas || [], gomi:d.gomi || [], yuru:d.yuru || [], trips:d.trips || [], stamps:d.stamps || [], rallies:d.rallies || [], tkchk:d.tkchk || []};
     }
   }catch(e){}
 }
@@ -102,7 +116,7 @@ function rebuildPlaces(){
   byId = {};
   PLACES.forEach(function(p){ byId[p.id] = p; });
 }
-function isR(t){ return /^r\d+$/.test(t); }
+function isR(t){ return /^r\d+$/.test(t) || t.indexOf("mc_") === 0; }
 function rebuildGot(){
   rebuildExtra();
   got = {}; gotR = {}; pendPf = {};
@@ -126,6 +140,7 @@ function rebuildGot(){
 }
 function has(pid, t){
   if(t === "yu") return !!(yuruBy[pid] && yuruBy[pid].length);
+  if(t === "sp") return !!(stampsBy[pid] && stampsBy[pid].length);
   return isR(t) ? !!gotR[t] : !!(got[pid] && got[pid][t]);
 }
 
@@ -148,7 +163,9 @@ function visiblePlaces(){
   return PLACES.filter(function(p){
     var st = stateOf(p);
     if(st.tot === 0) return false;
-    if(filt.undone && st.done === st.tot) return false;
+    if(filt.status === "undone" && st.done === st.tot) return false;
+    if(filt.status === "done" && st.done === 0) return false;
+    if(filt.pref && !prefMatch(prefOf(p), filt.pref)) return false;
     if(q && (p.n + " " + (p.a || "") + " " + (p.p || "")).toLowerCase().indexOf(q) === -1) return false;
     return true;
   });
@@ -159,7 +176,7 @@ function renderHeader(list){
   var d = 0, t = 0, rs = {};
   list.forEach(function(p){
     scopeTypes(p).forEach(function(x){
-      if(x === "yu") return;
+      if(x === "yu" || x === "sp") return;
       if(isR(x)){ if(rs[x]) return; rs[x] = 1; }
       t++; if(has(p.id, x)) d++;
     });
@@ -168,6 +185,45 @@ function renderHeader(list){
 }
 /* 絞り込み欄：一度作ったら使い回し、状態だけ更新する（開いた選択肢が閉じないように） */
 var FILT = null, FILT_SIG = "";
+function makeSelect(label, opts, onchange){
+  var s = document.createElement("select"); s.className = "chipsel"; s.setAttribute("aria-label", label);
+  opts.forEach(function(o){
+    if(o[0] === "__group"){ var g = document.createElement("optgroup"); g.label = o[1]; s.appendChild(g); s._g = g; return; }
+    var op = document.createElement("option"); op.value = o[0]; op.textContent = o[1]; (s._g || s).appendChild(op);
+  });
+  s.onchange = function(){ onchange(s.value); };
+  return s;
+}
+/* 都道府県の選択肢（地方単位も選べる） */
+function prefOptions(allLabel){
+  var o = [["", allLabel], ["__group","地方"]];
+  CHIHOU_ORDER.forEach(function(c){ if(c !== "その他") o.push(["ch:" + c, c]); });
+  o.push(["__group","都道府県"]);
+  PREF_ORDER.forEach(function(p){ o.push(["pf:" + p, p]); });
+  return o;
+}
+function prefMatch(pref, f){
+  if(!f) return true;
+  if(f.indexOf("pf:") === 0) return pref === f.slice(3);
+  return (PREF_CH[pref] || "") === f.slice(3);
+}
+/* 自分で立てた地点など県が空のものは、一番近い既存の地点の県とみなす */
+var PREF_CACHE = {};
+function prefOf(p){
+  if(!p) return "";
+  if(p.p) return p.p;
+  var ck = p.id + "@" + p.la + "," + p.lo;
+  if(PREF_CACHE[ck] !== undefined) return PREF_CACHE[ck];
+  if(!MASTER.length) return "";
+  var best = null, bd = 1e9;
+  for(var i = 0; i < MASTER.length; i++){
+    var q = MASTER[i]; if(!q.p) continue;
+    var d = Math.abs(q.la - p.la) + Math.abs(q.lo - p.lo);
+    if(d < bd){ bd = d; best = q; }
+  }
+  PREF_CACHE[ck] = best && bd < 1.0 ? best.p : "";
+  return PREF_CACHE[ck];
+}
 function presentGroups(){
   return GROUP_ORDER.filter(function(g){
     if(g === "yu" || g === "gm") return false;
@@ -204,11 +260,16 @@ function renderFilters(){
       var b = makeChip(GROUPS[g].label, GROUPS[g].color, function(){ filt.g[g] = !filt.g[g]; renderAll(); });
       FILT.chips[g] = b; w.appendChild(b);
     });
-    FILT.undone = makeChip("未完了のみ", "#E5A100", function(){ filt.undone = !filt.undone; listLimit = 100; renderAll(); });
-    w.appendChild(FILT.undone);
+    FILT.status = makeSelect("表示", [["all","表示: すべて"],["undone","表示: 未完了のみ"],["done","表示: 取得済みのみ"]], function(v){ filt.status = v; listLimit = 100; renderAll(); });
+    w.appendChild(FILT.status);
+    FILT.pref = makeSelect("都道府県", prefOptions("場所: 全国"), function(v){ filt.pref = v; listLimit = 100; renderAll(); fitPlaces(_vis); });
+    w.appendChild(FILT.pref);
   }
   Object.keys(FILT.chips).forEach(function(g){ setPressed(FILT.chips[g], filt.g[g]); });
-  setPressed(FILT.undone, filt.undone);
+  if(FILT.status.value !== filt.status) FILT.status.value = filt.status;
+  if(FILT.pref.value !== filt.pref) FILT.pref.value = filt.pref;
+  FILT.status.classList.toggle("on", filt.status !== "all");
+  FILT.pref.classList.toggle("on", !!filt.pref);
   setPressed(FILT.work, !!workDate);
   var wl = FILT.work.lastChild, wt = "記録日: " + (workDate ? dayLabel(workDate) : "今日");
   if(wl.textContent !== wt) wl.textContent = wt;
@@ -228,13 +289,18 @@ function sorted(list){
 function badgesHtml(p){
   var s = scopeTypes(p), h = "";
   var rts = s.filter(function(t){ return grp(t) === "rt"; });
+  var mhs = s.filter(function(t){ return grp(t) === "mh"; });
   s.forEach(function(t){
-    if(grp(t) === "rt") return;
+    if(grp(t) === "rt" || grp(t) === "mh") return;
     h += '<span class="bd' + (has(p.id,t) ? " on" : "") + '" style="--c:' + GROUPS[grp(t)].color + '">' + esc(tShort(t)) + "</span>";
   });
   if(rts.length){
     var d = rts.filter(function(t){ return has(p.id,t); }).length;
     h += '<span class="bd' + (d === rts.length ? " on" : "") + '" style="--c:' + GROUPS.rt.color + '">国' + d + "/" + rts.length + "</span>";
+  }
+  if(mhs.length){
+    var dm = mhs.filter(function(t){ return has(p.id,t); }).length;
+    h += '<span class="bd' + (dm === mhs.length ? " on" : "") + '" style="--c:' + GROUPS.mh.color + '">マ' + (mhs.length > 1 ? dm + "/" + mhs.length : "") + "</span>";
   }
   return h;
 }
@@ -322,6 +388,7 @@ function renderAll(){
   if(selId) renderDetail();
   else if(selArea) renderAreaDetail();
   else if(selTrip) renderTripDetail();
+  else if(selRally) renderRallyDetail();
 }
 
 /* ================= 地点詳細 ================= */
@@ -333,6 +400,7 @@ function openSheet(on){
 }
 function select(pid, pan){
   if(selTrip){ tripReturn = selTrip; selTrip = null; }
+  if(selRally){ selRally = null; if(rallyLayer) rallyLayer.clearLayers(); }
   selId = pid; selArea = null;
   var p = byId[pid]; if(!p) return;
   $("sheet").classList.add("detail");
@@ -342,7 +410,8 @@ function select(pid, pan){
   if(pan && mapOK) map.setView([p.la, p.lo], Math.max(map.getZoom(), 13));
 }
 function closeDetail(){
-  selId = null; selArea = null; selTrip = null; tripReturn = null;
+  selId = null; selArea = null; selTrip = null; tripReturn = null; selRally = null;
+  if(rallyLayer) rallyLayer.clearLayers();
   if(tripLayer) tripLayer.clearLayers();
   $("sheet").classList.remove("detail");
   renderAll();
@@ -365,15 +434,15 @@ function renderDetail(){
   if(p.ra) meta.push("帳: " + p.ra);
   h += '<div class="dmeta">' + esc(meta.filter(Boolean).join("・")) + (p.a ? "<br>" + esc(p.a) : "") + (p.h ? "<br>" + esc(p.h) : "") + "</div>";
   h += '<div class="dlinks">';
-  if(p.u) h += '<a class="btn sm" href="' + esc(p.u) + '" target="_blank" rel="noopener">公式ページ</a>';
+  if(p.u) h += '<a class="btn sm" href="' + esc(p.u) + '" target="_blank" rel="noopener">' + (p.k === "mh" ? "在庫・配布情報" : "公式ページ") + "</a>";
   h += '<a class="btn sm" href="https://www.google.com/maps/dir/?api=1&destination=' + p.la + "," + p.lo + '" target="_blank" rel="noopener">経路</a>';
-  if(p.k !== "yu") h += '<button class="btn sm primary" type="button" id="dVisit">訪問を記録</button>';
-  if(p.k === "cu" || p.k === "yu") h += '<button class="btn sm danger" type="button" id="dDelPlace">地点を削除</button>';
+  if(p.k !== "yu" && p.k !== "sp") h += '<button class="btn sm primary" type="button" id="dVisit">訪問を記録</button>';
+  if(p.k === "cu" || p.k === "yu" || p.k === "sp" || p.k === "et") h += '<button class="btn sm danger" type="button" id="dDelPlace">地点を削除</button>';
   h += "</div>";
 
-  if(p.c.some(function(t){ return t !== "yu"; })) h += '<div class="sect">収集物</div>';
+  if(p.c.some(function(t){ return t !== "yu" && t !== "sp"; })) h += '<div class="sect">収集物</div>';
   p.c.forEach(function(t){
-    if(t === "yu") return;
+    if(t === "yu" || t === "sp") return;
     var e = got[p.id] && got[p.id][t];
     var elsewhere = isR(t) && !e && gotR[t];
     var inToday = !!(tv && tv.g && tv.g[t]);
@@ -386,8 +455,8 @@ function renderDetail(){
   });
 
   var vs = visitsOf(p.id);
-  if(p.k !== "yu") h += '<div class="sect">訪問記録（' + vs.length + "件）</div>";
-  if(!vs.length && p.k !== "yu") h += '<p class="help">まだ記録はありません。</p>';
+  if(p.k !== "yu" && p.k !== "sp") h += '<div class="sect">訪問記録（' + vs.length + "件）</div>";
+  if(!vs.length && p.k !== "yu" && p.k !== "sp") h += '<p class="help">まだ記録はありません。</p>';
   vs.forEach(function(v){
     var items = Object.keys(v.g || {}).map(function(t){
       var no = v.g[t] && v.g[t].no;
@@ -397,12 +466,16 @@ function renderDetail(){
          (v.note ? '<div class="vn">' + esc(v.note) + "</div>" : "") + ((v.ph && v.ph.length) ? '<div class="thumbs" data-phs="' + esc(v.ph.join(",")) + '"></div>' : "") +
          '</div><button class="btn sm" type="button" data-v="' + esc(v.id) + '">編集</button></div>';
   });
+  var sps = (stampsBy[p.id] || []);
+  var stampSect = '<div class="sect">スタンプ（' + sps.length + '個）</div>' + stampListHtml(sps) + '<button class="btn sm" type="button" id="dStamp">スタンプを追加</button>';
   var ys = (yuruBy[p.id] || []);
-  h += '<div class="sect">ゆるキャラグッズ（' + ys.length + '点）</div>' + yuruListHtml(ys) +
-       '<button class="btn sm" type="button" id="dYuru">ゆるキャラグッズを追加</button>';
+  var yuruSect = '<div class="sect">ゆるキャラグッズ（' + ys.length + '点）</div>' + yuruListHtml(ys) + '<button class="btn sm" type="button" id="dYuru">ゆるキャラグッズを追加</button>';
+  h += p.k === "sp" ? stampSect + yuruSect : yuruSect + stampSect;
   el.innerHTML = h;
   fillPhotoSlots(el); bindBack();
   $("dYuru").onclick = function(){ openYuru({pid:p.id}, null); };
+  $("dStamp").onclick = function(){ openStamp({pid:p.id}, null); };
+  el.querySelectorAll("button[data-sp]").forEach(function(b){ b.onclick = function(){ openStamp({pid:p.id}, b.getAttribute("data-sp")); }; });
   bindYuruEdit(el);
   $("dClose").onclick = closeDetail;
   if($("dVisit")) $("dVisit").onclick = function(){ openVisit(p.id, null, null); };
@@ -412,6 +485,7 @@ function renderDetail(){
     if(c){ c.del = true; c.ua = nowIso(); }
     user.visits.forEach(function(v){ if(v.pid === p.id && !v.del){ v.del = true; v.ua = nowIso(); } });
     user.yuru.forEach(function(y){ if(y.pid === p.id && !y.del){ y.del = true; y.ua = nowIso(); } });
+    user.stamps.forEach(function(x){ if(x.pid === p.id && !x.del){ x.del = true; x.ua = nowIso(); } });
     save(); rebuildPlaces(); rebuildGot(); closeDetail();
   };
   el.querySelectorAll("button[data-t]").forEach(function(b){
@@ -517,8 +591,8 @@ $("vDel").onclick = function(){
 };
 
 /* ================= 進捗 ================= */
-var PROG_KINDS = [["gm","指定ごみ袋（自治体）"],["yu","ゆるキャラグッズ"],["me:all","道の駅（4種合計）"],["me:stamp","道の駅 スタンプ"],["me:kippu","道の駅 きっぷ"],["me:card","道の駅 カード"],
-  ["me:shitei","道の駅 指定券"],["hw","ハイウェイスタンプ"],["pf","ポケふた"],["rt","国道ステッカー"],["all","すべて"]];
+var PROG_KINDS = [["gm","指定ごみ袋（自治体）"],["yu","ゆるキャラグッズ"],["sp","スタンプ帳（街中のスタンプ）"],["me:all","道の駅（4種合計）"],["me:stamp","道の駅 スタンプ"],["me:kippu","道の駅 きっぷ"],["me:card","道の駅 カード"],
+  ["me:shitei","道の駅 指定券"],["hw","ハイウェイスタンプ"],["pf","ポケふた"],["rt","国道ステッカー"],["mh","マンホールカード"],["all","すべて"]];
 function kindMatch(kind, t){
   if(kind === "all") return true;
   var g = grp(t);
@@ -529,7 +603,7 @@ function kindMatch(kind, t){
 function tally(places, kind){
   var d = 0, t = 0, rs = {};
   places.forEach(function(p){ p.c.forEach(function(x){
-    if(!kindMatch(kind, x) || x === "yu") return;
+    if(!kindMatch(kind, x) || x === "yu" || x === "sp") return;
     if(isR(x)){ if(rs[x]) return; rs[x] = 1; }
     t++; if(has(p.id, x)) d++;
   }); });
@@ -553,6 +627,7 @@ function renderProgArea(){
   body.innerHTML = "";
   if(kind === "gm"){ renderProgGomi(body); return; }
   if(kind === "yu"){ renderProgYuru(body); return; }
+  if(kind === "sp"){ renderProgStamp(body); return; }
   var color = kind === "all" ? "#0B5394" : GROUPS[kind.indexOf("me") === 0 ? "me" : kind].color;
   body.appendChild(pgRow("全体", tally(PLACES, kind), color, "sum"));
   CHIHOU_ORDER.forEach(function(ch){
@@ -590,8 +665,9 @@ function renderProgRally(){
 }
 function openProg(){
   var s = $("progKind");
-  if(!s.options.length) PROG_KINDS.slice(2).concat(PROG_KINDS.slice(0,2)).forEach(function(k){ var o = document.createElement("option"); o.value = k[0]; o.textContent = k[1]; s.appendChild(o); });
-  renderProgArea(); renderProgRally();
+  if(!s.options.length) PROG_KINDS.slice(3).concat(PROG_KINDS.slice(0,3)).forEach(function(k){ var o = document.createElement("option"); o.value = k[0]; o.textContent = k[1]; s.appendChild(o); });
+  renderProgArea(); renderProgRally(); renderProgTeku();
+  if(!$("progList").hidden) renderProgList();
   $("dlgProg").showModal();
 }
 $("progKind").onchange = renderProgArea;
@@ -600,13 +676,16 @@ document.querySelectorAll(".tab").forEach(function(tb){
     document.querySelectorAll(".tab").forEach(function(x){ x.setAttribute("aria-selected", x === tb ? "true" : "false"); });
     $("progArea").hidden = tb.dataset.tab !== "area";
     $("progRally").hidden = tb.dataset.tab !== "rally";
+    $("progTeku").hidden = tb.dataset.tab !== "teku";
+    $("progList").hidden = tb.dataset.tab !== "list";
+    if(tb.dataset.tab === "list") renderProgList();
   };
 });
 
 /* ================= 読み込み・書き出し ================= */
 function exportJson(){
   return JSON.stringify({app:"collectmap", version:2, exported:nowIso(), visits:user.visits, custom:user.custom,
-    areas:user.areas, gomi:user.gomi, yuru:user.yuru, trips:user.trips});
+    areas:user.areas, gomi:user.gomi, yuru:user.yuru, trips:user.trips, stamps:user.stamps, rallies:user.rallies, tkchk:user.tkchk});
 }
 function ioMsg(s, err){ var m = $("ioMsg"); m.textContent = s; m.className = "msg" + (err ? " err" : ""); }
 function mergeV2(d){
@@ -624,7 +703,7 @@ function mergeV2(d){
     if(!ci[c.id]){ user.custom.push(c); ci[c.id] = c; }
     else if((c.ua || "") > (ci[c.id].ua || "")) Object.assign(ci[c.id], c);
   });
-  ["areas","gomi","yuru","trips"].forEach(function(k){
+  ["areas","gomi","yuru","trips","stamps","rallies","tkchk"].forEach(function(k){
     var idx = {}; user[k].forEach(function(x){ idx[x.id] = x; });
     (d[k] || []).forEach(function(x){
       if(!x || !x.id) return;
@@ -802,7 +881,7 @@ function initMap(){
 }
 
 /* ================= エリア（ゴミ袋・ゆるキャラ） ================= */
-var yuruBy = {}, yuruByArea = {}, gomiBy = {};
+var yuruBy = {}, yuruByArea = {}, gomiBy = {}, stampsBy = {};
 var selArea = null, areaLayer = null, pickLayer = null, pick = null;
 var BIDX = null, BND = {}, BLOADING = {};
 var AREA_COLOR = {gm:"#8D6E63", yu:"#F57C00"};
@@ -817,6 +896,10 @@ function rebuildExtra(){
     if(y.aid) (yuruByArea[y.aid] = yuruByArea[y.aid] || []).push(y);
   });
   user.gomi.forEach(function(g){ if(!g.del) (gomiBy[g.aid] = gomiBy[g.aid] || []).push(g); });
+  stampsBy = {}; chkMap = {};
+  (user.stamps || []).forEach(function(x){ if(!x.del && x.pid) (stampsBy[x.pid] = stampsBy[x.pid] || []).push(x); });
+  Object.keys(stampsBy).forEach(function(k){ stampsBy[k].sort(function(a,b){ return ((parseInt(a.bk,10)||0) - (parseInt(b.bk,10)||0)) || ((parseInt(a.pg,10)||0) - (parseInt(b.pg,10)||0)); }); });
+  (user.tkchk || []).forEach(function(c){ if(!c.del && (!chkMap[c.k] || c.d < chkMap[c.k])) chkMap[c.k] = c.d; });
   [yuruBy, yuruByArea, gomiBy].forEach(function(m){
     Object.keys(m).forEach(function(k){ m[k].sort(function(a,b){ return (b.d || "").localeCompare(a.d || ""); }); });
   });
@@ -1062,10 +1145,12 @@ $("yDel").onclick = function(){
 };
 
 /* ---- 範囲を選ぶモード ---- */
-function startPick(purpose){
-  if(!mapOK){ toast("地図が使えないため範囲を選べません"); return; }
-  if(!BIDX){ toast("自治体データを読み込み中です。少し待ってから試してください"); loadIndex().catch(function(){}); return; }
-  pick = {purpose:purpose, mode: purpose === "yuruPoint" ? "point" : "muni", sel:{}, ward:false, poly:[]};
+var POINT_PURPOSES = {yuruPoint:1, stampPoint:1, ekitagPoint:1, rallySpot:1};
+function startPick(purpose, extra){
+  if(!mapOK){ toast("地図が使えないため場所を選べません"); return; }
+  var isPoint = !!POINT_PURPOSES[purpose];
+  if(!isPoint && !BIDX){ toast("自治体データを読み込み中です。少し待ってから試してください"); loadIndex().catch(function(){}); return; }
+  pick = Object.assign({purpose:purpose, mode: isPoint ? "point" : "muni", sel:{}, ward:false, poly:[]}, extra || {});
   closeDetail(); openSheet(false);
   $("pickBar").classList.add("on");
   if(pick.mode !== "point" && map.getZoom() < 8) map.setZoom(8);
@@ -1077,7 +1162,8 @@ function updatePickBar(){
   if(!pick) return;
   var msg = "", btns = [];
   if(pick.mode === "point"){
-    msg = "地図をタップして、施設や会社の場所を指定してください";
+    msg = {yuruPoint:"地図をタップして、施設や会社の場所を指定してください", stampPoint:"地図をタップして、スタンプのある場所を指定してください",
+      ekitagPoint:"地図をタップして、エキタグを取った駅の場所を指定してください", rallySpot:"地図をタップして、ラリーのスポットを指定してください"}[pick.purpose];
     btns.push(["やめる","cancel",""]);
   }else if(pick.mode === "muni"){
     var names = suggestName(Object.keys(pick.sel), null);
@@ -1151,8 +1237,11 @@ function drawPickBoundaries(){
 function onMapClickPick(e){
   if(!pick) return;
   if(pick.mode === "point"){
-    var ll = e.latlng; endPick();
-    openYuru({newPoint:{lat:+ll.lat.toFixed(6), lng:+ll.lng.toFixed(6)}}, null);
+    var ll = e.latlng, pp = pick, np = {lat:+ll.lat.toFixed(6), lng:+ll.lng.toFixed(6)}; endPick();
+    if(pp.purpose === "stampPoint") openStamp({newPoint:np}, null);
+    else if(pp.purpose === "ekitagPoint"){ var en = prompt("駅の名前（例：〇〇駅）"); if(en && en.trim()) registerEkitag({n:en.trim(), la:np.lat, lo:np.lng}); }
+    else if(pp.purpose === "rallySpot"){ var rn = prompt("スポットの名前"); if(rn && rn.trim()) addRallySpot(pp.rid, {k:"sp:" + uid(), n:rn.trim(), la:np.lat, lo:np.lng}); else showRally(pp.rid); }
+    else openYuru({newPoint:np}, null);
     return;
   }
   if(pick.mode === "draw"){
@@ -1317,6 +1406,7 @@ function openAddMenu(ll){
   $("addCtx").style.display = addCtx ? "block" : "none";
   $("yuruPointSub").textContent = addCtx ? "長押しした場所に登録" : "地図をタップして場所を指定";
   $("placeSub").textContent = addCtx ? "長押しした場所に追加" : "現在地、または緯度経度を入力して追加";
+  $("stampSub").textContent = addCtx ? "長押しした場所に、写真・冊とページ・コメントを記録" : "場所を指定して、写真・冊とページ・コメントを記録";
   $("dlgAdd").showModal();
 }
 
@@ -1325,6 +1415,9 @@ document.querySelectorAll("[data-add]").forEach(function(b){
   b.onclick = function(){
     var k = b.getAttribute("data-add"), ll = addCtx; $("dlgAdd").close(); addCtx = null;
     if(k === "place") openAddPlace(ll ? L.latLng(ll.lat, ll.lng) : null);
+    else if(k === "stamp"){ if(ll) openStamp({newPoint:ll}, null); else startPick("stampPoint"); }
+    else if(k === "ekitag"){ if(ll){ var en = prompt("駅の名前（例：〇〇駅）"); if(en && en.trim()) registerEkitag({n:en.trim(), la:ll.lat, lo:ll.lng}); } else openStationSearch({mode:"ekitag"}); }
+    else if(k === "rally") openRallyForm(null);
     else if(k === "yuruPoint"){ if(ll) openYuru({newPoint:ll}, null); else startPick("yuruPoint"); }
     else openNames(k);
   };
@@ -1745,7 +1838,7 @@ $("trackIn").onchange = function(){
 };
 
 /* ---- 立ち寄り候補 ---- */
-function primaryTypes(p){ return p.k === "me" ? ["stamp"] : p.k === "sa" ? ["hw"] : p.k === "pf" ? ["pf"] : p.k === "cu" ? ["cu"] : []; }
+function primaryTypes(p){ return p.k === "me" ? ["stamp"] : p.k === "sa" ? ["hw"] : p.k === "pf" ? ["pf"] : p.k === "mh" ? p.c.slice() : p.k === "cu" ? ["cu"] : []; }
 function findCandidates(tr){
   var out = [], seen = {};
   (tr.stays || []).forEach(function(s){
@@ -2041,6 +2134,443 @@ $("tlClear").onclick = function(){
   idbClear("days").then(function(){ localStorage.removeItem(TL_META_KEY); TRK = {}; showTlStat(); $("tlMsg").textContent = "消しました"; if(selTrip) drawTrip(false); })
     .catch(function(e){ $("tlMsg").textContent = "消せませんでした：" + e.message; });
 };
+/* ================= 都道府県→地方 ================= */
+var PREF_CH = {};
+[["北海道",["北海道"]],["東北",["青森県","岩手県","宮城県","秋田県","山形県","福島県"]],["関東",["茨城県","栃木県","群馬県","埼玉県","千葉県","東京都","神奈川県"]],
+ ["中部",["新潟県","富山県","石川県","福井県","山梨県","長野県","岐阜県","静岡県","愛知県"]],["近畿",["三重県","滋賀県","京都府","大阪府","兵庫県","奈良県","和歌山県"]],
+ ["中国",["鳥取県","島根県","岡山県","広島県","山口県"]],["四国",["徳島県","香川県","愛媛県","高知県"]],
+ ["九州・沖縄",["福岡県","佐賀県","長崎県","熊本県","大分県","宮崎県","鹿児島県","沖縄県"]]].forEach(function(x){ x[1].forEach(function(p){ PREF_CH[p] = x[0]; }); });
+
+/* ================= 駅データ（必要なときだけ読む） ================= */
+var STN = null, STN_P = null;
+function loadStations(){
+  if(STN) return Promise.resolve(STN);
+  if(STN_P) return STN_P;
+  STN_P = fetch("stations.json").then(function(r){ return r.json(); }).then(function(d){
+    var linesOf = {};
+    d.lines.forEach(function(l){ l.s.forEach(function(id){ (linesOf[id] = linesOf[id] || []).push(l.n); }); });
+    STN = {st:d.st, lines:d.lines, linesOf:linesOf}; return STN;
+  });
+  STN_P.catch(function(){ STN_P = null; });
+  return STN_P;
+}
+function searchStations(q){
+  q = nfkc(q).replace(/\s+/g, "").replace(/駅$/, "");
+  if(!q || !STN) return [];
+  var exact = [], pre = [], part = [];
+  Object.keys(STN.st).forEach(function(id){
+    var n = nfkc(STN.st[id][0]);
+    if(n === q) exact.push(id); else if(n.indexOf(q) === 0) pre.push(id); else if(q.length >= 2 && n.indexOf(q) > 0) part.push(id);
+  });
+  var big = function(a, b){ return (STN.linesOf[b] || []).length - (STN.linesOf[a] || []).length; };
+  return exact.sort(big).concat(pre.sort(big), part).slice(0, 60);
+}
+function stName(id){ var s = STN.st[id]; return s[0] + "駅（" + s[1] + "）"; }
+var stnCtx = null, stnTimer = null;
+function openStationSearch(ctx){
+  stnCtx = ctx;
+  $("snTitle").textContent = ctx.mode === "ekitag" ? "エキタグを取った駅" : "ラリーに駅を追加";
+  $("snQ").value = ""; $("snRes").innerHTML = '<p class="help">駅名を入れてください（「駅」は付けなくて大丈夫です）。</p>';
+  $("snMap").textContent = ctx.mode === "ekitag" ? "地図で場所を指定" : "地図でスポットを追加";
+  $("dlgStation").showModal();
+  loadStations().catch(function(){ $("snRes").innerHTML = '<p class="help">駅データを読み込めませんでした。通信のある場所で試してください。</p>'; });
+  setTimeout(function(){ $("snQ").focus(); }, 60);
+}
+function renderStationResults(){
+  if(!STN) return;
+  var ids = searchStations($("snQ").value), el = $("snRes");
+  if(!$("snQ").value.trim()){ el.innerHTML = ""; return; }
+  if(!ids.length){ el.innerHTML = '<p class="help">見つかりません。新しい駅などは「地図で場所を指定」から登録できます。</p>'; return; }
+  el.innerHTML = ids.map(function(id){
+    var s = STN.st[id];
+    return '<button type="button" class="srow" data-sid="' + id + '"><span class="sn"><b>' + esc(stName(id)) + "</b><small>" + esc(s[4] + "・" + (STN.linesOf[id] || []).join("・")) + "</small></span></button>";
+  }).join("");
+  el.querySelectorAll("[data-sid]").forEach(function(b){ b.onclick = function(){ pickStation(b.getAttribute("data-sid")); }; });
+}
+$("snQ").addEventListener("input", function(){ clearTimeout(stnTimer); stnTimer = setTimeout(renderStationResults, 150); });
+$("snMap").onclick = function(){
+  var ctx = stnCtx; $("dlgStation").close();
+  if(ctx.mode === "ekitag") startPick("ekitagPoint"); else startPick("rallySpot", {rid:ctx.rid});
+};
+function pickStation(id){
+  var ctx = stnCtx; $("dlgStation").close();
+  if(ctx.mode === "ekitag") registerEkitag(id);
+  else{ var s = STN.st[id]; addRallySpot(ctx.rid, {k:"st:" + s[1] + "|" + s[0], n:s[0] + "駅", la:s[2], lo:s[3]}); }
+}
+
+/* ================= エキタグ（取った駅だけ登録） ================= */
+function registerEkitag(spec){
+  var n, la, lo, p = "";
+  if(typeof spec === "string"){ var s = STN.st[spec]; n = stName(spec); la = s[2]; lo = s[3]; p = s[4]; }
+  else{ n = spec.n; la = spec.la; lo = spec.lo; }
+  var ex = user.custom.filter(function(c){ return !c.del && c.k === "et" && c.n === n; })[0], tmp = false, pid;
+  if(ex) pid = ex.id;
+  else{
+    var pl = {id:"et" + uid(), k:"et", n:n, la:la, lo:lo, p:p, r:PREF_CH[p] || "", a:"エキタグ", c:["et"], ua:nowIso()};
+    user.custom.push(pl); rebuildPlaces(); pid = pl.id; tmp = true;
+  }
+  openVisit(pid, null, "et");
+  if(editVisit) editVisit.tmpPlace = tmp;
+}
+/* 新しく作った地点で、記録を保存せずに閉じたら地点も取り消す */
+$("dlgVisit").addEventListener("close", function(){
+  var ev = editVisit;
+  if(ev && ev.tmpPlace && !visitsOf(ev.pid).length){
+    user.custom = user.custom.filter(function(c){ return c.id !== ev.pid; });
+    rebuildPlaces(); rebuildGot(); renderAll();
+  }
+  if(ev) ev.tmpPlace = false;
+});
+
+/* ================= 街中のスタンプ ================= */
+var editS = null;
+function nextBookPage(){
+  var last = null;
+  user.stamps.forEach(function(s){ if(!s.del && (!last || (s.ca || "") > (last.ca || ""))) last = s; });
+  return last ? {bk:last.bk || "1", pg:String((parseInt(last.pg, 10) || 0) + 1)} : {bk:"1", pg:"1"};
+}
+function openStamp(target, sid){
+  var r = sid ? user.stamps.filter(function(x){ return x.id === sid; })[0] : null;
+  editS = {target:target, id:r ? r.id : null, ph:(r && r.ph || []).slice(), add:[], del:[], busy:0};
+  $("sTitle").textContent = r ? "スタンプを編集" : "スタンプを記録";
+  $("sPlaceWrap").style.display = target.newPoint ? "" : "none";
+  $("sPlace").value = "";
+  var nb = nextBookPage();
+  $("sName").value = r ? (r.n || "") : ""; $("sBook").value = r ? (r.bk || "") : nb.bk; $("sPage").value = r ? (r.pg || "") : nb.pg;
+  $("sDate").value = r ? (r.d || curDate()) : curDate(); $("sNote").value = r ? (r.note || "") : "";
+  $("sMsg").textContent = ""; $("sDel").style.display = r ? "" : "none";
+  renderDateChips("sDateChips", "sDate"); renderSThumbs();
+  $("dlgStamp").showModal();
+}
+function renderSThumbs(){
+  var ev = editS, box = $("sThumbs"); if(!ev) return;
+  box.innerHTML = "";
+  ev.ph.forEach(function(id){ box.appendChild(makeThumb(function(){ return photoURL(id); }, function(){ ev.ph = ev.ph.filter(function(x){ return x !== id; }); ev.del.push(id); renderSThumbs(); })); });
+  ev.add.forEach(function(a){ box.appendChild(makeThumb(function(){ return Promise.resolve(a.url); }, function(){ ev.add = ev.add.filter(function(x){ return x !== a; }); renderSThumbs(); })); });
+  if(ev.busy){ var w = document.createElement("div"); w.className = "thumb wait"; w.textContent = "処理中"; box.appendChild(w); }
+}
+$("sPhotoIn").onchange = function(){
+  var files = [].slice.call(this.files || []); this.value = "";
+  var ev = editS; if(!files.length || !ev) return;
+  ev.busy += files.length; renderSThumbs();
+  files.forEach(function(f){ resizeImage(f).then(function(b){ ev.add.push({blob:b, url:URL.createObjectURL(b)}); ev.busy--; if(editS === ev) renderSThumbs(); }); });
+};
+$("formStamp").addEventListener("submit", function(e){
+  e.preventDefault();
+  var ev = editS; if(!ev) return;
+  if(ev.busy){ $("sMsg").textContent = "写真の処理が終わるまで少し待ってください"; return; }
+  var rec = {n:$("sName").value.trim(), bk:$("sBook").value.trim(), pg:$("sPage").value.trim(), d:$("sDate").value, note:$("sNote").value.trim()};
+  if(!rec.n && !ev.ph.length && !ev.add.length && !rec.note && !rec.pg){ $("sMsg").textContent = "名前・ページ・写真・コメントのどれかを入れてください"; return; }
+  var pid = ev.target.pid;
+  if(ev.target.newPoint && !$("sPlace").value.trim()){ $("sMsg").textContent = "場所の名前を入れてください"; return; }
+  var sid = ev.id || ("sp" + uid()), newIds = [];
+  var jobs = ev.add.map(function(a){ var id = "ph" + uid() + newIds.length; newIds.push(id); return idbPut("photos", {id:id, blob:a.blob, pid:pid || "", sid:sid, ca:nowIso()}); });
+  function finish(){
+    if(ev.target.newPoint){
+      var np = ev.target.newPoint;
+      var pl = {id:"sp" + uid(), k:"sp", n:$("sPlace").value.trim(), la:np.lat, lo:np.lng, p:"", r:"", a:"", c:["sp"], ua:nowIso()};
+      user.custom.push(pl); rebuildPlaces(); pid = pl.id;
+    }
+    ev.del.forEach(function(id){ idbDel("photos", id).catch(function(){}); });
+    var ph = ev.ph.concat(newIds);
+    if(ev.id){ var r = user.stamps.filter(function(x){ return x.id === ev.id; })[0]; Object.assign(r, rec); r.ph = ph; r.ua = nowIso(); }
+    else user.stamps.push(Object.assign({id:sid, pid:pid, ph:ph, ca:nowIso(), ua:nowIso()}, rec));
+    save(); rebuildGot(); $("dlgStamp").close(); select(pid, !!ev.target.newPoint); renderAll();
+    toast("スタンプを記録しました" + (rec.bk || rec.pg ? "（" + (rec.bk ? rec.bk + "冊目 " : "") + (rec.pg ? rec.pg + "ページ" : "") + "）" : ""));
+  }
+  if(!jobs.length){ finish(); return; }
+  $("sMsg").textContent = "写真を保存しています…";
+  Promise.all(jobs).then(finish).catch(function(err){ $("sMsg").textContent = "写真を保存できませんでした：" + err.message; });
+});
+$("sDel").onclick = function(){
+  if(!editS || !editS.id || !confirm("このスタンプの記録を削除しますか？")) return;
+  var r = user.stamps.filter(function(x){ return x.id === editS.id; })[0];
+  r.del = true; r.ua = nowIso(); (r.ph || []).forEach(function(id){ idbDel("photos", id).catch(function(){}); });
+  save(); rebuildGot(); $("dlgStamp").close(); renderAll();
+};
+function bkLabel(s){ return (s.bk ? s.bk + "冊目" : "") + (s.pg ? " p." + s.pg : ""); }
+function stampListHtml(list){
+  if(!list.length) return '<p class="help">まだ記録はありません。</p>';
+  return list.map(function(s){
+    return '<div class="visit"><div class="vb"><div class="vd">' + (bkLabel(s) ? '<span class="bk">' + esc(bkLabel(s)) + "</span>" : "") + esc(s.n || "（名前なし）") +
+      '</div><div class="vi">' + esc(fmtDate(s.d)) + "</div>" + (s.note ? '<div class="vn">' + esc(s.note) + "</div>" : "") +
+      ((s.ph && s.ph.length) ? '<div class="thumbs" data-phs="' + esc(s.ph.join(",")) + '"></div>' : "") +
+      '</div><button class="btn sm" type="button" data-sp="' + esc(s.id) + '">編集</button></div>';
+  }).join("");
+}
+
+/* ================= テクテクライフのラリー ================= */
+var selRally = null, rallyLayer = null, editR = null, rLineTimer = null, chkMap = {};
+function rallyById(id){ return (user.rallies || []).filter(function(r){ return r.id === id; })[0]; }
+function liveRallies(){ return (user.rallies || []).filter(function(r){ return !r.del; }); }
+function rallyProg(r){
+  if(r.t === "count") return {d:+r.done || 0, t:+r.total || 0};
+  var d = (r.spots || []).filter(function(s){ return chkMap[s.k]; }).length;
+  return {d:d, t:Math.max((r.spots || []).length, +r.total || 0)};
+}
+function updateCleared(){
+  liveRallies().forEach(function(r){
+    var p = rallyProg(r);
+    if(p.t && p.d >= p.t){ if(!r.cleared){ r.cleared = curDate(); r.ua = nowIso(); } }
+    else if(r.cleared){ r.cleared = ""; r.ua = nowIso(); }
+  });
+}
+function openRallyForm(id){
+  var r = id ? rallyById(id) : null;
+  editR = {id:r ? r.id : null, line:null};
+  $("rTitle").textContent = r ? "ラリーを編集" : "ラリーを作る";
+  $("rName").value = r ? r.n : ""; $("rType").value = r ? r.t : "line"; $("rType").disabled = !!r;
+  $("rTotal").value = r ? (r.total || "") : ""; $("rDone").value = r ? (r.done || "") : "";
+  $("rNote").value = r ? (r.note || "") : ""; $("rMsg").textContent = "";
+  $("rLineQ").value = ""; $("rLineRes").innerHTML = ""; $("rLineSel").textContent = r && r.line ? "路線：" + r.line : "";
+  $("rDel").style.display = r ? "" : "none";
+  rTypeUI(!!r);
+  $("dlgRally").showModal();
+  if(!r) loadStations().catch(function(){});
+}
+function rTypeUI(editing){
+  var t = $("rType").value;
+  $("rLineWrap").style.display = t === "line" && !editing ? "" : "none";
+  $("rCountWrap").style.display = t === "line" && !editing ? "none" : "";
+  $("rDoneWrap").style.display = t === "count" ? "" : "none";
+  $("rTotal").placeholder = t === "spot" ? "わかれば（空欄でも可）" : "";
+}
+$("rType").onchange = function(){ rTypeUI(false); };
+function renderLineResults(){
+  var q = nfkc($("rLineQ").value).replace(/\s+/g, ""), el = $("rLineRes");
+  if(!STN || !q){ el.innerHTML = ""; return; }
+  var hits = STN.lines.filter(function(l){ return nfkc(l.n).indexOf(q) >= 0 || nfkc(l.o).indexOf(q) >= 0; }).slice(0, 40);
+  el.innerHTML = hits.length ? hits.map(function(l){
+    return '<button type="button" class="srow" data-lid="' + l.id + '"><span class="sn"><b>' + esc(l.o + " " + l.n) + "</b><small>" + l.s.length + "駅：" +
+      esc(l.s.slice(0, 4).map(function(id){ return STN.st[id][0]; }).join("・")) + (l.s.length > 4 ? "…" : "") + "</small></span></button>";
+  }).join("") : '<p class="help">見つかりません。</p>';
+  el.querySelectorAll("[data-lid]").forEach(function(b){
+    b.onclick = function(){
+      var l = STN.lines.filter(function(x){ return x.id === b.getAttribute("data-lid"); })[0];
+      editR.line = l; $("rLineSel").textContent = "選んだ路線：" + l.o + " " + l.n + "（" + l.s.length + "駅）"; el.innerHTML = "";
+      if(!$("rName").value.trim()) $("rName").value = l.o + " " + l.n;
+    };
+  });
+}
+$("rLineQ").addEventListener("input", function(){ clearTimeout(rLineTimer); rLineTimer = setTimeout(function(){ loadStations().then(renderLineResults).catch(function(){}); }, 150); });
+$("formRally").addEventListener("submit", function(e){
+  e.preventDefault();
+  var n = $("rName").value.trim(), t = $("rType").value;
+  if(!n){ $("rMsg").textContent = "ラリーの名前を入れてください"; return; }
+  if(editR.id){
+    var r = rallyById(editR.id);
+    r.n = n; r.note = $("rNote").value.trim(); r.total = $("rTotal").value.trim(); if(r.t === "count") r.done = $("rDone").value.trim(); r.ua = nowIso();
+    updateCleared(); save(); $("dlgRally").close(); showRally(r.id); return;
+  }
+  var rec = {id:"ra" + uid(), n:n, t:t, spots:[], total:$("rTotal").value.trim(), done:t === "count" ? $("rDone").value.trim() : "", note:$("rNote").value.trim(), cleared:"", ca:nowIso(), ua:nowIso()};
+  if(t === "line"){
+    if(!editR.line){ $("rMsg").textContent = "路線を選んでください"; return; }
+    var l = editR.line; rec.line = l.o + " " + l.n;
+    rec.spots = l.s.map(function(id){ var s = STN.st[id]; return {k:"st:" + s[1] + "|" + s[0], n:s[0] + "駅", la:s[2], lo:s[3]}; });
+  }
+  user.rallies.push(rec); updateCleared(); save(); $("dlgRally").close(); showRally(rec.id);
+});
+$("rDel").onclick = function(){
+  if(!editR || !editR.id || !confirm("このラリーを削除しますか？（チェックインの記録は他のラリーのために残ります）")) return;
+  var r = rallyById(editR.id); r.del = true; r.ua = nowIso();
+  save(); $("dlgRally").close(); closeDetail();
+};
+function addRallySpot(rid, sp){
+  var r = rallyById(rid); if(!r) return;
+  if((r.spots || []).some(function(x){ return x.k === sp.k; })){ toast("すでにこのラリーに入っています"); showRally(rid); return; }
+  r.spots = (r.spots || []).concat([sp]); r.ua = nowIso();
+  updateCleared(); save(); showRally(rid); toast(sp.n + " を追加しました");
+}
+function toggleChk(k, name){
+  var ex = user.tkchk.filter(function(c){ return c.k === k && !c.del; })[0];
+  if(ex){ if(!confirm((name || "このスポット") + " のチェックインを取り消しますか？")) return; ex.del = true; ex.ua = nowIso(); }
+  else user.tkchk.push({id:"tk" + uid(), k:k, n:name || "", d:curDate(), ca:nowIso(), ua:nowIso()});
+  rebuildExtra(); updateCleared(); save(); renderAll();
+}
+function showRally(id){
+  selRally = id; selId = null; selArea = null; selTrip = null; tripReturn = null;
+  $("sheet").classList.add("detail"); openSheet(true);
+  renderRallyDetail(); drawRally(true);
+}
+function drawRally(fit){
+  if(!mapOK) return;
+  if(!rallyLayer) rallyLayer = L.layerGroup().addTo(map);
+  rallyLayer.clearLayers();
+  var r = selRally && rallyById(selRally); if(!r) return;
+  var pts = [];
+  (r.spots || []).forEach(function(s){
+    if(!isFinite(s.la)) return;
+    var on = !!chkMap[s.k]; pts.push([s.la, s.lo]);
+    var m = L.circleMarker([s.la, s.lo], {radius:7, color:"#3949AB", weight:2, fillColor:on ? "#3949AB" : "#fff", fillOpacity:1});
+    m.on("click", function(){ if(!on && !confirm(s.n + " にチェックインしましたか？")) return; toggleChk(s.k, s.n); });
+    rallyLayer.addLayer(m);
+  });
+  if(fit && pts.length) map.fitBounds(L.latLngBounds(pts), {padding:[40,40], maxZoom:14});
+}
+function renderRallyDetail(){
+  var r = rallyById(selRally), el = $("detail");
+  if(!r || r.del){ closeDetail(); return; }
+  var p = rallyProg(r), TL = {line:"路線", spot:"スポット", count:"数だけ記録"};
+  var h = '<div class="dhead"><h2>' + esc(r.n) + '</h2><button class="btn sm ghost" type="button" id="dClose" aria-label="閉じる">✕</button></div>';
+  h += '<div class="dmeta">テクテクライフ・' + TL[r.t] + (r.line ? "（" + esc(r.line) + "）" : "") + "<br><b>" + p.d + " / " + (p.t || "?") + "</b>" + (p.t ? "（" + pct(p.d, p.t) + "%）" : "") +
+       (r.cleared ? '・<span style="color:var(--done);font-weight:700">達成 ' + esc(fmtDate(r.cleared)) + "</span>" : "") + (r.note ? "<br>" + esc(r.note) : "") + "</div>";
+  h += '<div class="dlinks">';
+  if(r.t === "count") h += '<button class="btn sm" type="button" id="rMinus">−1</button><button class="btn sm primary" type="button" id="rPlus">＋1</button>';
+  else h += '<button class="btn sm" type="button" id="rAddSt">駅を追加</button><button class="btn sm" type="button" id="rAddMap">地図で追加</button><button class="btn sm" type="button" id="rAddPl">地点から追加</button>';
+  h += '<button class="btn sm" type="button" id="rEdit">編集</button></div>';
+  if(r.t !== "count"){
+    h += '<div class="sect">スポット（' + (r.spots || []).length + "）</div>";
+    if(!(r.spots || []).length) h += '<p class="help">まだスポットがありません。上のボタンから追加してください。</p>';
+    (r.spots || []).forEach(function(s, i){
+      var d = chkMap[s.k];
+      h += '<div class="srow"><button type="button" class="chkb' + (d ? " on" : "") + '" data-ck="' + i + '">' + (d ? "✓ " + esc(shortDate(d)) : "未") + '</button>' +
+           '<button type="button" class="sn" data-go="' + i + '" style="background:none;border:0;text-align:left;padding:0"><b>' + esc(s.n) + "</b></button>" +
+           '<button type="button" class="xbtn" data-rm="' + i + '" aria-label="外す">✕</button></div>';
+    });
+  }
+  el.innerHTML = h;
+  $("dClose").onclick = closeDetail;
+  $("rEdit").onclick = function(){ openRallyForm(r.id); };
+  if(r.t === "count"){
+    $("rPlus").onclick = function(){ r.done = String((+r.done || 0) + 1); r.ua = nowIso(); updateCleared(); save(); renderAll(); };
+    $("rMinus").onclick = function(){ r.done = String(Math.max(0, (+r.done || 0) - 1)); r.ua = nowIso(); updateCleared(); save(); renderAll(); };
+  }else{
+    $("rAddSt").onclick = function(){ openStationSearch({mode:"rally", rid:r.id}); };
+    $("rAddMap").onclick = function(){ startPick("rallySpot", {rid:r.id}); };
+    $("rAddPl").onclick = function(){ openPlacePick(r.id); };
+  }
+  el.querySelectorAll("[data-ck]").forEach(function(b){ b.onclick = function(){ var s = r.spots[+b.getAttribute("data-ck")]; toggleChk(s.k, s.n); }; });
+  el.querySelectorAll("[data-go]").forEach(function(b){ b.onclick = function(){ var s = r.spots[+b.getAttribute("data-go")]; if(mapOK && isFinite(s.la)) map.setView([s.la, s.lo], Math.max(map.getZoom(), 14)); }; });
+  el.querySelectorAll("[data-rm]").forEach(function(b){ b.onclick = function(){
+    var s = r.spots[+b.getAttribute("data-rm")]; if(!confirm(s.n + " をこのラリーから外しますか？")) return;
+    r.spots = r.spots.filter(function(x){ return x !== s; }); r.ua = nowIso(); updateCleared(); save(); renderAll();
+  }; });
+  drawRally(false);
+}
+var ppRid = null, ppTimer = null;
+function openPlacePick(rid){ ppRid = rid; $("ppQ").value = ""; $("ppRes").innerHTML = ""; $("dlgPlacePick").showModal(); setTimeout(function(){ $("ppQ").focus(); }, 60); }
+$("ppQ").addEventListener("input", function(){ clearTimeout(ppTimer); ppTimer = setTimeout(function(){
+  var q = nfkc($("ppQ").value).replace(/\s+/g, ""), el = $("ppRes");
+  if(!q){ el.innerHTML = ""; return; }
+  var hits = PLACES.filter(function(p){ return nfkc(p.n).replace(/\s+/g, "").indexOf(q) >= 0; }).slice(0, 40);
+  el.innerHTML = hits.length ? hits.map(function(p){ return '<button type="button" class="srow" data-pp="' + esc(p.id) + '"><span class="sn"><b>' + esc(p.n) + "</b><small>" + esc(p.p || "") + "</small></span></button>"; }).join("") : '<p class="help">見つかりません。</p>';
+  el.querySelectorAll("[data-pp]").forEach(function(b){ b.onclick = function(){
+    var p = byId[b.getAttribute("data-pp")]; $("dlgPlacePick").close();
+    addRallySpot(ppRid, {k:"pl:" + p.id, n:p.n, la:p.la, lo:p.lo});
+  }; });
+}, 150); });
+function renderProgTeku(){
+  var el = $("progTeku"); el.innerHTML = "";
+  var list = liveRallies().slice().sort(function(a,b){ var pa = rallyProg(a), pb = rallyProg(b); return (pct(pb.d, pb.t) - pct(pa.d, pa.t)) || a.n.localeCompare(b.n, "ja"); });
+  var done = list.filter(function(r){ return r.cleared; }).length;
+  var top = document.createElement("div"); top.className = "help";
+  top.innerHTML = "ラリー " + list.length + " 件・達成 " + done + " 件";
+  el.appendChild(top);
+  list.forEach(function(r){
+    var p = rallyProg(r);
+    var row = pgRow(r.n, {d:p.d, t:p.t}, "#3949AB", r.cleared ? "sum" : "", function(){ $("dlgProg").close(); showRally(r.id); });
+    row.querySelector(".pn").style.width = "auto"; row.querySelector(".pn").style.flex = "1 1 40%";
+    el.appendChild(row);
+  });
+  var b = document.createElement("button"); b.type = "button"; b.className = "btn primary"; b.style.marginTop = "12px"; b.textContent = "新しいラリー";
+  b.onclick = function(){ $("dlgProg").close(); openRallyForm(null); };
+  el.appendChild(b);
+}
+function renderProgStamp(body){
+  var live = user.stamps.filter(function(s){ return !s.del; });
+  live.sort(function(a,b){ return ((parseInt(a.bk,10)||0) - (parseInt(b.bk,10)||0)) || ((parseInt(a.pg,10)||0) - (parseInt(b.pg,10)||0)) || (a.d || "").localeCompare(b.d || ""); });
+  var h = '<p class="help">スタンプ ' + live.length + " 個。スタンプ帳の冊・ページ順に並べています。行を押すと場所を開きます。</p>", lastBk = null;
+  live.forEach(function(s, i){
+    if(s.bk !== lastBk){ h += '<div class="pg-h">' + esc(s.bk ? s.bk + "冊目" : "冊の指定なし") + "</div>"; lastBk = s.bk; }
+    var p = byId[s.pid];
+    h += '<button type="button" class="titem" data-si="' + i + '" style="--c:#827717"><span class="dot"></span><span><span class="bk">' + esc(s.pg ? "p." + s.pg : "") + "</span>" +
+         esc((s.n || "（名前なし）") + (p ? "（" + p.n + "）" : "")) + "</span></button>";
+  });
+  body.innerHTML = h;
+  body.querySelectorAll("[data-si]").forEach(function(b){ b.onclick = function(){ var s = live[+b.getAttribute("data-si")]; $("dlgProg").close(); if(byId[s.pid]) select(s.pid, true); }; });
+}
+
+
+/* ================= 取得一覧（取ったもの1つずつ） ================= */
+var LIST_CATS = [["", "種類: すべて"], ["me","道の駅（4種すべて）"], ["me:stamp","道の駅 スタンプ"], ["me:kippu","道の駅 きっぷ"], ["me:card","道の駅 カード"], ["me:shitei","道の駅 指定券"],
+  ["hw","ハイウェイスタンプ"], ["pf","ポケふた"], ["rt","国道ステッカー"], ["mh","マンホールカード"], ["et","エキタグ"],
+  ["gm","指定ごみ袋"], ["yu","ゆるキャラグッズ"], ["sp","街中のスタンプ"], ["cu","その他"]];
+var listLimitL = 200;
+function acquiredItems(){
+  var items = [], first = {};
+  user.visits.filter(function(v){ return !v.del; }).sort(function(a,b){ return (a.d || "").localeCompare(b.d || ""); }).forEach(function(v){
+    Object.keys(v.g || {}).forEach(function(t){
+      if(t === "pf" && !(v.ph && v.ph.length)) return;     // ポケふたは写真付きで取得
+      var key = isR(t) ? t : v.pid + "|" + t;
+      var it = first[key];
+      if(!it){ it = first[key] = {kind:"v", t:t, pid:v.pid, d:v.d, n:0, nos:[]}; items.push(it); }
+      it.n++; var no = v.g[t] && v.g[t].no; if(no) it.nos.push(no);
+    });
+  });
+  user.gomi.forEach(function(g){ if(!g.del) items.push({kind:"g", g:g, aid:g.aid, d:g.d}); });
+  user.yuru.forEach(function(y){ if(!y.del) items.push({kind:"y", y:y, pid:y.pid, aid:y.aid, d:y.d}); });
+  (user.stamps || []).forEach(function(x){ if(!x.del) items.push({kind:"s", s:x, pid:x.pid, d:x.d}); });
+  return items;
+}
+function itemInfo(it){
+  var p = it.pid ? byId[it.pid] : null, a = it.aid ? areaById(it.aid) : null;
+  var pref = p ? prefOf(p) : (a && BIDX ? (areaPrefs(a)[0] || "") : "");
+  if(it.kind === "v"){
+    var g = grp(it.t);
+    return {cat: g === "me" ? "me:" + it.t : g, color: (GROUPS[g] || GROUPS.cu).color, pref: pref, where: p ? p.n : "（削除された地点）",
+      label: tLabel(it.t) + (it.nos.length ? "（No." + it.nos.join(", ") + "）" : "") + (it.n > 1 ? "・" + it.n + "回" : "")};
+  }
+  if(it.kind === "g") return {cat:"gm", color:GROUPS.gm.color, pref:pref, where:a ? a.n : "エリア", label:"ゴミ袋 " + [it.g.t, it.g.s, it.g.col].filter(Boolean).join("・")};
+  if(it.kind === "y") return {cat:"yu", color:GROUPS.yu.color, pref:pref, where:p ? p.n : (a ? a.n : ""), label:"ゆるキャラ " + [it.y.ch, it.y.it].filter(Boolean).join("・")};
+  return {cat:"sp", color:GROUPS.sp.color, pref:pref, where:p ? p.n : "", label:"スタンプ " + (it.s.n || "（名前なし）") + (bkLabel(it.s) ? "（" + bkLabel(it.s) + "）" : "")};
+}
+function catMatch(cat, c){ return !c || cat === c || (c === "me" && cat.indexOf("me:") === 0); }
+function initListUI(){
+  if($("lCat").options.length) return;
+  LIST_CATS.forEach(function(o){ var op = document.createElement("option"); op.value = o[0]; op.textContent = o[1]; $("lCat").appendChild(op); });
+  var ps = makeSelect("都道府県", prefOptions("場所: 全国"), function(){});
+  $("lPref").innerHTML = ps.innerHTML;
+  ["lCat","lPref","lSort"].forEach(function(id){ $(id).onchange = function(){ listLimitL = 200; renderProgList(); }; });
+  var tm = null; $("lQ").oninput = function(){ clearTimeout(tm); tm = setTimeout(function(){ listLimitL = 200; renderProgList(); }, 150); };
+}
+function renderProgList(){
+  initListUI();
+  var cat = $("lCat").value, pf = $("lPref").value, sort = $("lSort").value;
+  var q = nfkc($("lQ").value).toLowerCase().replace(/\s+/g, "");
+  var all = acquiredItems();
+  all.forEach(function(it){ it.info = itemInfo(it); });
+  var list = all.filter(function(it){
+    if(!catMatch(it.info.cat, cat) || !prefMatch(it.info.pref, pf)) return false;
+    return !q || nfkc(it.info.label + it.info.where + it.info.pref).toLowerCase().replace(/\s+/g, "").indexOf(q) >= 0;
+  });
+  list.sort(function(a,b){
+    if(sort === "name") return a.info.label.localeCompare(b.info.label, "ja") || a.info.where.localeCompare(b.info.where, "ja");
+    var c = (a.d || "").localeCompare(b.d || "");
+    return sort === "old" ? c : -c;
+  });
+  $("lSum").textContent = list.length + " 件" + (list.length !== all.length ? "（全 " + all.length + " 件中）" : "") +
+    "。同じものを何度も取った場合は、最初に取った日で1件にまとめています。";
+  var el = $("lBody"); el.innerHTML = "";
+  if(!list.length){ el.innerHTML = '<p class="help">条件に合うものはありません。</p>'; return; }
+  var frag = document.createDocumentFragment();
+  list.slice(0, listLimitL).forEach(function(it){
+    var b = document.createElement("button"); b.type = "button"; b.className = "litem"; b.style.setProperty("--c", it.info.color);
+    b.innerHTML = '<span class="dot"></span><span class="lb">' + esc(it.info.label) + "<small>" + esc([it.info.where, it.info.pref].filter(Boolean).join("・")) +
+      '</small></span><span class="ld">' + esc(fmtDate(it.d)) + "</span>";
+    b.onclick = function(){
+      $("dlgProg").close();
+      if(it.pid && byId[it.pid]) select(it.pid, true); else if(it.aid && areaById(it.aid)) selectArea(it.aid, true);
+    };
+    frag.appendChild(b);
+  });
+  el.appendChild(frag);
+  if(list.length > listLimitL){
+    var m = document.createElement("button"); m.type = "button"; m.className = "btn more";
+    m.textContent = "さらに表示（残り " + (list.length - listLimitL) + " 件）";
+    m.onclick = function(){ listLimitL += 200; renderProgList(); };
+    el.appendChild(m);
+  }
+}
 /* ================= 配線 ================= */
 document.addEventListener("click", function(e){
   var t = e.target;
@@ -2057,7 +2587,7 @@ $("handle").onclick = function(){
   openSheet(!$("sheet").classList.contains("open"));
 };
 $("search").oninput = function(){ filt.q = this.value; listLimit = 100; renderAll(); };
-$("aboutData").innerHTML = "地点データの出典：道の駅＝国土数値情報（道の駅）・OpenStreetMap 由来の公開データ／ハイウェイスタンプ＝NEXCO東日本・中日本・西日本 公式一覧／国道ステッカー＝国道ステッカー公式 番号別販売店リスト（一部店舗の位置はGoogleマップで補完）／ポケふた＝公開トラッカーデータ。自治体境界＝国土交通省 国土数値情報（行政区域）2021年を加工（smartnews-smri/japan-topography）。地図 &copy; OpenStreetMap contributors。";
+$("aboutData").innerHTML = "地点データの出典：道の駅＝国土数値情報（道の駅）・OpenStreetMap 由来の公開データ／ハイウェイスタンプ＝NEXCO東日本・中日本・西日本 公式一覧／国道ステッカー＝国道ステッカー公式 番号別販売店リスト（一部店舗の位置はGoogleマップで補完）／ポケふた＝公開トラッカーデータ。マンホールカード＝mhcard-map（MIT License, Copyright (c) 2026 akh）を加工、元の情報は下水道広報プラットホーム（GKP）・各自治体の公式ページ／自治体境界＝国土交通省 国土数値情報（行政区域）2021年を加工（smartnews-smri/japan-topography）。駅（テクテクライフの路線・エキタグの駅検索）＝国土交通省 国土数値情報（駅別乗降客数データ）2025年度版を加工。地図 &copy; OpenStreetMap contributors。";
 
 /* ================= 起動 ================= */
 load();
@@ -2065,7 +2595,12 @@ rebuildPlaces(); rebuildGot();
 initMap();
 renderAll();
 fetch("data.json", {cache:"no-cache"}).then(function(r){ return r.json(); }).then(function(d){
-  MASTER = d.places || [];
+  var base = d.places || [];
+  return fetch("mc.json", {cache:"no-cache"}).then(function(r){ return r.json(); }).catch(function(){ return null; }).then(function(mc){
+    MCI = (mc && mc.cards) || {};
+    MASTER = base.concat((mc && mc.places) || []);
+  });
+}).then(function(){
   rebuildPlaces(); rebuildGot(); renderAll();
   loadIndex().then(renderAll).catch(function(){});
 }).catch(function(){
@@ -2085,5 +2620,6 @@ window.__cm = {user:function(){ return user; }, places:function(){ return PLACES
   openAddMenu:openAddMenu, openNames:openNames, refreshNames:refreshNames,
   parseTrack:parseTrack, findCandidates:findCandidates, showTrip:showTrip, openCandidates:openCandidates, getTrack:getTrack,
   buildMediaZip:buildMediaZip, importMediaZip:importMediaZip, zipRead:zipRead, idbAll:idbAll, idbDel:idbDel, curDate:curDate,
-  pend:function(){ return pendPf; }, trk:function(){ return TRK; }, openVisit:openVisit, importTimeline:importTimeline, fire:function(ev, ll){ map.fire(ev, {latlng:L.latLng(ll[0], ll[1])}); }};
+  pend:function(){ return pendPf; }, renderProgList:renderProgList, acquiredItems:acquiredItems, prefOf:prefOf, loadStations:loadStations, registerEkitag:registerEkitag, openStamp:openStamp, showRally:showRally,
+  openRallyForm:openRallyForm, toggleChk:toggleChk, chk:function(){ return chkMap; }, rallyProg:rallyProg, stn:function(){ return STN; }, trk:function(){ return TRK; }, openVisit:openVisit, importTimeline:importTimeline, fire:function(ev, ll){ map.fire(ev, {latlng:L.latLng(ll[0], ll[1])}); }};
 })();
