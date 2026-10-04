@@ -46,6 +46,7 @@ header{background:var(--sign);color:#fff;padding:calc(env(safe-area-inset-top) +
 .chipsel{flex:0 0 auto;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.3);color:#fff;border-radius:999px;
   padding:6px 10px;font-size:13px;appearance:none;-webkit-appearance:none}
 .chipsel option{color:var(--ink)}
+.chipsel.on{background:#fff;color:var(--sign-dark);border-color:#fff;font-weight:600}
 
 /* 地図 */
 #mapwrap{position:relative;flex:1 1 auto;min-height:0}
@@ -142,7 +143,16 @@ label.l{display:block;font-size:12px;color:var(--ink-soft);margin:0 0 5px}
 
 /* 進捗 */
 .tabs{display:flex;gap:6px;margin-bottom:12px}
-.tab{flex:1;border:1px solid var(--line);background:#fff;border-radius:9px;padding:8px;font-size:13px;font-weight:600;color:var(--ink-soft)}
+.tab{flex:1;border:1px solid var(--line);background:#fff;border-radius:9px;padding:8px 4px;font-size:12px;font-weight:600;color:var(--ink-soft);line-height:1.3}
+.tabs{flex-wrap:wrap}
+.lfil{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.lfil select,.lfil input{flex:1 1 30%;min-width:0;padding:8px 9px;border:1px solid var(--line);border-radius:9px;background:#fff;font-size:12.5px}
+.lfil input{flex-basis:100%}
+.litem{display:flex;gap:10px;align-items:flex-start;width:100%;text-align:left;background:none;border:0;border-top:1px solid var(--line-soft);padding:9px 2px}
+.litem .dot{width:9px;height:9px;border-radius:50%;background:var(--c);margin-top:5px;flex:0 0 auto}
+.litem .lb{flex:1;min-width:0;font-size:13.5px;line-height:1.5}
+.litem .lb small{display:block;color:var(--ink-soft);font-size:11.5px}
+.litem .ld{flex:0 0 auto;font-size:11.5px;color:var(--ink-soft);font-variant-numeric:tabular-nums;margin-top:2px}
 .tab[aria-selected="true"]{background:var(--sign);border-color:var(--sign);color:#fff}
 .pg-h{font-size:12px;font-weight:700;color:var(--ink-soft);letter-spacing:.06em;margin:14px 0 4px}
 .pg{display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--line-soft);width:100%;background:none;border-left:0;border-right:0;border-bottom:0;text-align:left}
@@ -195,6 +205,12 @@ label.l{display:block;font-size:12px;color:var(--ink-soft);margin:0 0 5px}
 .cand input{width:20px;height:20px;margin-top:2px;flex:0 0 auto}
 .cand small{display:block;color:var(--ink-soft);font-size:11.5px}
 #phView{max-width:100%;max-height:70dvh;display:block;margin:0 auto;border-radius:8px}
+.srow{display:flex;gap:8px;align-items:center;width:100%;text-align:left;background:none;border:0;border-top:1px solid var(--line-soft);padding:9px 2px}
+.srow .sn{flex:1;min-width:0}.srow .sn b{font-size:14px}.srow .sn small{display:block;color:var(--ink-soft);font-size:11.5px;margin-top:2px}
+.chkb{flex:0 0 auto;min-width:64px;border:2px solid var(--line);background:#fff;border-radius:999px;padding:6px 10px;font-size:12px;font-weight:700;color:var(--ink-soft)}
+.chkb.on{background:#3949AB;border-color:#3949AB;color:#fff}
+.xbtn{flex:0 0 auto;border:0;background:none;color:var(--ink-soft);font-size:15px;padding:6px}
+.bk{font-variant-numeric:tabular-nums;font-weight:700;color:#827717;margin-right:6px}
 #toast{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom) + 20px);transform:translateX(-50%);background:var(--ink);color:#fff;
   padding:10px 16px;border-radius:999px;font-size:13px;opacity:0;pointer-events:none;transition:opacity .2s;z-index:9999;max-width:88vw;text-align:center}
 #toast.show{opacity:.95}
@@ -267,12 +283,25 @@ label.l{display:block;font-size:12px;color:var(--ink-soft);margin:0 0 5px}
     <div class="tabs" role="tablist">
       <button class="tab" role="tab" data-tab="area" aria-selected="true" type="button">地方・都府県</button>
       <button class="tab" role="tab" data-tab="rally" aria-selected="false" type="button">道の駅スタンプ帳</button>
+      <button class="tab" role="tab" data-tab="teku" aria-selected="false" type="button">テクテク</button>
+      <button class="tab" role="tab" data-tab="list" aria-selected="false" type="button">取得一覧</button>
     </div>
     <div id="progArea">
       <div class="f"><select id="progKind"></select></div>
       <div id="progAreaBody"></div>
     </div>
     <div id="progRally" hidden></div>
+    <div id="progTeku" hidden></div>
+    <div id="progList" hidden>
+      <div class="lfil">
+        <select id="lCat" aria-label="種類"></select>
+        <select id="lPref" aria-label="都道府県"></select>
+        <select id="lSort" aria-label="並べ替え"><option value="new">新しい順</option><option value="old">古い順</option><option value="name">名前順</option></select>
+        <input id="lQ" type="search" placeholder="名前・場所で絞り込み" autocomplete="off">
+      </div>
+      <div id="lSum" class="help"></div>
+      <div id="lBody"></div>
+    </div>
   </div>
   <div class="foot"><button class="btn" type="button" data-close>閉じる</button></div>
 </div></dialog>
@@ -341,6 +370,9 @@ label.l{display:block;font-size:12px;color:var(--ink-soft);margin:0 0 5px}
     <button class="btn" type="button" data-add="gomi">ゴミ袋<small>自治体名をカンマ区切りで入力。地図で選ぶこともできます</small></button>
     <button class="btn" type="button" data-add="yuruArea">ゆるキャラグッズ（自治体・地域）<small>自治体名を入力、地図で選ぶ、または範囲を描く</small></button>
     <button class="btn" type="button" data-add="yuruPoint">ゆるキャラグッズ（施設・会社などの地点）<small id="yuruPointSub">地図をタップして場所を指定</small></button>
+    <button class="btn" type="button" data-add="stamp">スタンプ（街中など）<small id="stampSub">場所を指定して、写真・冊とページ・コメントを記録</small></button>
+    <button class="btn" type="button" data-add="ekitag">エキタグ<small>取った駅を駅名で探して記録（地図で場所を指定することも可）</small></button>
+    <button class="btn" type="button" data-add="rally">テクテクライフのラリー<small>路線・スポット・数だけ、の3つの形で作れます</small></button>
     <button class="btn" type="button" data-add="place">その他の地点<small id="placeSub">場所を指定して追加</small></button>
   </div>
   <div class="foot"><button class="btn" type="button" data-close>閉じる</button></div>
@@ -411,6 +443,85 @@ label.l{display:block;font-size:12px;color:var(--ink-soft);margin:0 0 5px}
 </div></dialog>
 
 <input type="file" id="trackIn" accept=".json,.gpx,application/json,application/gpx+xml" style="display:none">
+
+<!-- 駅を探す（エキタグ・ラリー） -->
+<dialog id="dlgStation"><div class="dlg">
+  <h2 id="snTitle">駅を探す</h2>
+  <div class="content">
+    <div class="f"><input id="snQ" type="search" placeholder="駅名（例：高崎）" autocomplete="off"></div>
+    <div id="snRes"></div>
+  </div>
+  <div class="foot">
+    <button class="btn" type="button" id="snMap">地図で場所を指定</button>
+    <button class="btn ghost" type="button" data-close>閉じる</button>
+  </div>
+</div></dialog>
+
+<!-- 登録済みの地点から選ぶ -->
+<dialog id="dlgPlacePick"><div class="dlg">
+  <h2>登録済みの地点から追加</h2>
+  <div class="content">
+    <div class="f"><input id="ppQ" type="search" placeholder="名前で検索" autocomplete="off"></div>
+    <div id="ppRes"></div>
+  </div>
+  <div class="foot"><button class="btn ghost" type="button" data-close>閉じる</button></div>
+</div></dialog>
+
+<!-- 街中のスタンプ -->
+<dialog id="dlgStamp"><form method="dialog" class="dlg" id="formStamp">
+  <h2 id="sTitle">スタンプを記録</h2>
+  <div class="content">
+    <div class="f" id="sPlaceWrap"><label class="l" for="sPlace">場所の名前</label><input id="sPlace" placeholder="〇〇観光案内所、〇〇駅 など"></div>
+    <div class="f"><label class="l" for="sName">スタンプの名前</label><input id="sName" placeholder="〇〇記念スタンプ（空欄でも可）"></div>
+    <div class="two">
+      <div class="f"><label class="l" for="sBook">スタンプ帳（冊目）</label><input id="sBook" inputmode="numeric"></div>
+      <div class="f"><label class="l" for="sPage">ページ</label><input id="sPage" inputmode="numeric"></div>
+    </div>
+    <div class="f"><label class="l" for="sDate">押した日</label><input type="date" id="sDate"></div>
+    <div class="dchips" id="sDateChips"></div>
+    <label class="l">写真</label>
+    <div class="thumbs" id="sThumbs"></div>
+    <label class="btn sm" for="sPhotoIn" style="cursor:pointer">写真を追加</label>
+    <input type="file" id="sPhotoIn" accept="image/*" multiple style="display:none">
+    <div class="f" style="margin-top:12px"><label class="l" for="sNote">コメント</label><textarea id="sNote" placeholder="設置場所、インクの色、押しにくさ など"></textarea></div>
+    <div class="msg err" id="sMsg"></div>
+  </div>
+  <div class="foot">
+    <button class="btn danger" id="sDel" type="button">このスタンプを削除</button>
+    <button class="btn ghost" type="button" data-close>やめる</button>
+    <button class="btn primary" type="submit">保存する</button>
+  </div>
+</form></dialog>
+
+<!-- テクテクライフのラリー -->
+<dialog id="dlgRally"><form method="dialog" class="dlg" id="formRally">
+  <h2 id="rTitle">ラリーを作る</h2>
+  <div class="content">
+    <div class="f"><label class="l" for="rName">ラリーの名前</label><input id="rName" placeholder="JR山手線、金沢名所10選 など"></div>
+    <div class="f" id="rTypeWrap"><label class="l" for="rType">ラリーの形</label>
+      <select id="rType">
+        <option value="line">路線（駅を自動で並べる）</option>
+        <option value="spot">スポット（名所・グルメなど、自分で地点を入れる）</option>
+        <option value="count">数だけ記録（達成数と全体数のみ）</option>
+      </select></div>
+    <div id="rLineWrap">
+      <div class="f"><label class="l" for="rLineQ">路線を探す</label><input id="rLineQ" type="search" placeholder="路線名・事業者名（例：山手線、宇都宮）" autocomplete="off"></div>
+      <div id="rLineSel" class="help"></div>
+      <div id="rLineRes"></div>
+    </div>
+    <div class="two" id="rCountWrap">
+      <div class="f"><label class="l" for="rTotal">全体の数</label><input id="rTotal" inputmode="numeric"></div>
+      <div class="f" id="rDoneWrap"><label class="l" for="rDone">達成した数</label><input id="rDone" inputmode="numeric"></div>
+    </div>
+    <div class="f"><label class="l" for="rNote">メモ</label><textarea id="rNote"></textarea></div>
+    <div class="msg err" id="rMsg"></div>
+  </div>
+  <div class="foot">
+    <button class="btn danger" id="rDel" type="button">ラリーを削除</button>
+    <button class="btn ghost" type="button" data-close>やめる</button>
+    <button class="btn primary" type="submit">保存する</button>
+  </div>
+</form></dialog>
 
 <!-- 自治体を名前で指定 -->
 <dialog id="dlgNames"><div class="dlg">
