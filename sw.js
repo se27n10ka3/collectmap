@@ -1,8 +1,8 @@
 /* 収集マップ Service Worker */
-var VER = "cm-shell-5.1.0";
+var VER = "cm-shell-5.4.0";
 var TILES = "cm-tiles-1";
 var TILE_MAX = 2000;
-var SHELL = ["./", "index.html", "app.js", "data.json", "b/index.json", "manifest.webmanifest",
+var SHELL = ["./", "index.html", "app.js", "data.json", "mc.json", "b/index.json", "manifest.webmanifest",
              "vendor/leaflet.js", "vendor/leaflet.css", "icon-192.png", "icon-512.png"];
 
 self.addEventListener("install", function(e){
